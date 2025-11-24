@@ -1,21 +1,47 @@
 # codemap 🗺️
 
-> A CLI tool that generates a compact, visually structured "brain map" of your codebase for LLM context.
+> **codemap — a project brain for your AI.**
+> Give LLMs instant architectural context without burning tokens.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Go](https://img.shields.io/badge/go-1.21+-00ADD8.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-3776AB.svg)
 
-**codemap** is designed to give Large Language Models (LLMs) instant architectural context of your project without burning thousands of tokens. It produces a dense, tree-like structure that highlights important files and hides clutter.
+![codemap screenshot](assets/screenshot.png)
+
+## Why codemap exists
+
+Modern LLMs are powerful, but blind. They can write code — but only after you ask them to burn tokens searching or manually explain your entire project structure.
+
+That means:
+*   🔥 **Burning thousands of tokens**
+*   🔁 **Repeating context**
+*   📋 **Pasting directory trees**
+*   ❓ **Answering “where is X defined?”**
+
+**codemap fixes that.**
+
+One command → a compact, structured “brain map” of your codebase that LLMs can instantly understand.
 
 ## Features
 
 - 🧠 **Brain Map Output**: Visualizes your codebase structure in a single, pasteable block.
-- 📉 **Token Efficient**: Clusters files and strips extensions to save vertical space.
+- 📉 **Token Efficient**: Clusters files and simplifies names to save vertical space.
 - ⭐️ **Smart Highlighting**: Automatically flags the top 5 largest source code files.
 - 📂 **Smart Flattening**: Merges empty intermediate directories (e.g., `src/main/java`).
 - 🎨 **Rich Context**: Color-coded by language for easy scanning.
 - 🚫 **Noise Reduction**: Automatically ignores `.git`, `node_modules`, and assets (images, binaries).
+
+## ⚙️ How It Works
+
+**codemap** is built for speed and structure:
+1.  **Scanner (Go)**: Instantly traverses your directory, respecting `.gitignore` and ignoring junk files.
+2.  **Renderer (Python)**: Consumes the raw data and renders a highly structured, color-coded ASCII tree.
+3.  **Output**: A clean, dense "brain map" that is both human-readable and machine-optimized.
+
+## ⚡ Performance
+
+**codemap** runs instantly even on large repos (hundreds or thousands of files). This makes it ideal for LLM workflows — no lag, no multi-tool dance.
 
 ## Installation
 
@@ -52,19 +78,30 @@ Or specify a path:
 codemap /path/to/my/project
 ```
 
-## Example Output
+### AI Usage Example
 
-```text
-codemap
-├── 📂 .claude/ (100.0B)
-│   └── ⭐️ settings.local.json
-├── 📂 renderer/ (12.3KB)
-│   └── ⭐️ render.py
-├── 📂 scanner/ (3 files, 3.7KB)
-│   └── ⭐️ go.mod ⭐️ main.go
-│       go.sum              
-└── ⭐️ Makefile
-```
+**The Killer Use Case:**
+
+1.  Run codemap and copy the output:
+    ```bash
+    codemap . | pbcopy
+    ```
+
+2.  Or simply tell Claude, Codex, or Cursor:
+    > "Use codemap to understand my project structure."
+
+## Roadmap
+
+- [ ] **Graph Mode** (ASCII relationship graph)
+- [ ] **Dependency mapping** (import graph)
+
+## Contributing
+
+We love contributions!
+1.  Fork the repo.
+2.  Create a branch (`git checkout -b feature/my-feature`).
+3.  Commit your changes.
+4.  Push and open a Pull Request.
 
 ## License
 
