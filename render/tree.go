@@ -107,13 +107,17 @@ func formatSize(size int64) string {
 func Tree(project scanner.Project) {
 	files := project.Files
 	projectName := filepath.Base(project.Root)
+	isDiffMode := project.DiffRef != ""
 
 	// Calculate stats
 	totalFiles := len(files)
 	var totalSize int64 = 0
+	var totalAdded, totalRemoved int = 0, 0
 	extCount := make(map[string]int)
 	for _, f := range files {
 		totalSize += f.Size
+		totalAdded += f.Added
+		totalRemoved += f.Removed
 		if f.Ext != "" {
 			extCount[f.Ext]++
 		}
@@ -148,8 +152,17 @@ func Tree(project scanner.Project) {
 	rightPad := padding - leftPad
 	fmt.Printf("╭%s%s%s╮\n", strings.Repeat("─", leftPad), titleLine, strings.Repeat("─", rightPad))
 
-	// Stats line
-	statsLine := fmt.Sprintf("Files: %d | Size: %s", totalFiles, formatSize(totalSize))
+	// Stats line - different for diff mode
+	var statsLine string
+	if isDiffMode {
+		if totalRemoved > 0 {
+			statsLine = fmt.Sprintf("Changed: %d files | +%d -%d lines vs %s", totalFiles, totalAdded, totalRemoved, project.DiffRef)
+		} else {
+			statsLine = fmt.Sprintf("Changed: %d files | +%d lines vs %s", totalFiles, totalAdded, project.DiffRef)
+		}
+	} else {
+		statsLine = fmt.Sprintf("Files: %d | Size: %s", totalFiles, formatSize(totalSize))
+	}
 	fmt.Printf("│ %-*s │\n", innerWidth-2, statsLine)
 
 	// Extensions line
@@ -168,6 +181,18 @@ func Tree(project scanner.Project) {
 	root := buildTreeStructure(files)
 	fmt.Printf("%s%s%s\n", Bold, projectName, Reset)
 	printTreeNode(root, "", true, topLarge)
+
+	// Print impact footer for diff mode
+	if isDiffMode && len(project.Impact) > 0 {
+		fmt.Println()
+		for _, imp := range project.Impact {
+			files := "files"
+			if imp.UsedBy == 1 {
+				files = "file"
+			}
+			fmt.Printf("%s⚠ %s is used by %d other %s%s\n", Yellow, imp.File, imp.UsedBy, files, Reset)
+		}
+	}
 }
 
 // printTreeNode recursively prints tree nodes
@@ -296,20 +321,43 @@ func printTreeNode(node *treeNode, prefix string, isLast bool, topLarge map[stri
 				}
 			}
 
-			// Star for top large files
-			starPrefix := ""
-			if topLarge[f.file.Path] {
-				starPrefix = "⭐️ "
+			// Prefix: diff status indicator OR star for large files
+			prefix := ""
+			prefixWidth := 0
+			if f.file.IsNew {
+				prefix = "(new) "
+				prefixWidth = 6
+				color = Bold + Green
+			} else if f.file.Added > 0 || f.file.Removed > 0 {
+				prefix = "✎ "
+				prefixWidth = 3
+				color = Bold + Yellow
+			} else if topLarge[f.file.Path] {
+				prefix = "⭐️ "
+				prefixWidth = 3
 				color = Bold + color
 			}
 
-			display := starPrefix + displayName
-			colored := fmt.Sprintf("%s%s%s%s", color, starPrefix, displayName, Reset)
-			// Width calculation: star emoji is 2 chars wide visually
-			width := len(displayName)
-			if starPrefix != "" {
-				width += 3 // "⭐️ " is about 3 chars wide
+			// Suffix: diff stats
+			suffix := ""
+			suffixWidth := 0
+			if f.file.IsNew && f.file.Added > 0 {
+				// New file: just show total lines
+				suffix = fmt.Sprintf(" (+%d)", f.file.Added)
+				suffixWidth = len(suffix)
+			} else if f.file.Added > 0 || f.file.Removed > 0 {
+				// Modified file: show +/-
+				if f.file.Removed > 0 {
+					suffix = fmt.Sprintf(" (+%d -%d)", f.file.Added, f.file.Removed)
+				} else {
+					suffix = fmt.Sprintf(" (+%d)", f.file.Added)
+				}
+				suffixWidth = len(suffix)
 			}
+
+			display := prefix + displayName + suffix
+			colored := fmt.Sprintf("%s%s%s%s%s%s", color, prefix, displayName, Reset, Dim, suffix+Reset)
+			width := prefixWidth + len(displayName) + suffixWidth
 			entries = append(entries, fileEntry{display, colored, width})
 		}
 

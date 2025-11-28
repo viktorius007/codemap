@@ -2,17 +2,22 @@ package scanner
 
 // FileInfo represents a single file in the codebase.
 type FileInfo struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
-	Ext  string `json:"ext"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	Ext     string `json:"ext"`
+	IsNew   bool   `json:"is_new,omitempty"`
+	Added   int    `json:"added,omitempty"`
+	Removed int    `json:"removed,omitempty"`
 }
 
 // Project represents the root of the codebase for tree/skyline mode.
 type Project struct {
-	Root    string     `json:"root"`
-	Mode    string     `json:"mode"`
-	Animate bool       `json:"animate"`
-	Files   []FileInfo `json:"files"`
+	Root    string       `json:"root"`
+	Mode    string       `json:"mode"`
+	Animate bool         `json:"animate"`
+	Files   []FileInfo   `json:"files"`
+	DiffRef string       `json:"diff_ref,omitempty"`
+	Impact  []ImpactInfo `json:"impact,omitempty"`
 }
 
 // FileAnalysis holds extracted info about a single file for deps mode.
@@ -29,4 +34,5 @@ type DepsProject struct {
 	Mode         string              `json:"mode"`
 	Files        []FileAnalysis      `json:"files"`
 	ExternalDeps map[string][]string `json:"external_deps"`
+	DiffRef      string              `json:"diff_ref,omitempty"`
 }

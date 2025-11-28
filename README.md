@@ -5,7 +5,6 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Go](https://img.shields.io/badge/go-1.21+-00ADD8.svg)
-![Python](https://img.shields.io/badge/python-3.8+-3776AB.svg)
 
 ![codemap screenshot](assets/codemap.png)
 
@@ -34,10 +33,10 @@ One command → a compact, structured “brain map” of your codebase that LLMs
 
 ## ⚙️ How It Works
 
-**codemap** is built for speed and structure:
-1.  **Scanner (Go)**: Instantly traverses your directory, respecting `.gitignore` and ignoring junk files.
-2.  **Renderer (Python)**: Consumes the raw data and renders a highly structured, color-coded ASCII tree.
-3.  **Output**: A clean, dense "brain map" that is both human-readable and machine-optimized.
+**codemap** is a single Go binary — fast and dependency-free:
+1.  **Scanner**: Instantly traverses your directory, respecting `.gitignore` and ignoring junk.
+2.  **Analyzer**: Uses tree-sitter grammars to parse imports/functions across 16 languages.
+3.  **Renderer**: Outputs a clean, dense "brain map" that is both human-readable and LLM-optimized.
 
 ## ⚡ Performance
 
@@ -45,24 +44,20 @@ One command → a compact, structured “brain map” of your codebase that LLMs
 
 ## Installation
 
-### Homebrew
+### Homebrew (recommended)
 
 ```bash
 brew tap JordanCoin/tap
 brew install codemap
 ```
 
-### Manual
+### From source
 
-1.  Clone the repo:
-    ```bash
-    git clone https://github.com/JordanCoin/codemap.git
-    cd codemap
-    ```
-2.  Install dependencies:
-    ```bash
-    make install
-    ```
+```bash
+git clone https://github.com/JordanCoin/codemap.git
+cd codemap
+go build -o codemap .
+```
 
 ## Usage
 
@@ -89,6 +84,41 @@ codemap /path/to/my/project
 
 2.  Or simply tell Claude, Codex, or Cursor:
     > "Use codemap to understand my project structure."
+
+## Diff Mode
+
+See what you're working on with `--diff`:
+
+```bash
+codemap --diff
+```
+
+```
+╭─────────────────────────── myproject ──────────────────────────╮
+│ Changed: 4 files | +156 -23 lines vs main                      │
+│ Top Extensions: .go (3), .tsx (1)                              │
+╰────────────────────────────────────────────────────────────────╯
+myproject
+├── api/
+│   └── (new) auth.go         ✎ handlers.go (+45 -12)
+├── web/
+│   └── ✎ Dashboard.tsx (+82 -8)
+└── ✎ main.go (+29 -3)
+
+⚠ handlers.go is used by 3 other files
+⚠ api is used by 2 other files
+```
+
+**What it shows:**
+- 📊 **Change summary**: Total files and lines changed vs main branch
+- ✨ **New vs modified**: `(new)` for untracked files, `✎` for modified
+- 📈 **Line counts**: `(+45 -12)` shows additions and deletions per file
+- ⚠️ **Impact analysis**: Which changed files are imported by others (uses tree-sitter)
+
+Compare against a different branch:
+```bash
+codemap --diff --ref develop
+```
 
 ## Skyline Mode
 
@@ -161,6 +191,7 @@ codemap supports **16 languages** for dependency analysis:
 
 ## Roadmap
 
+- [x] **Diff Mode** (`codemap --diff`) — show changed files with impact analysis
 - [x] **Skyline Mode** (`codemap --skyline`) — ASCII cityscape visualization
 - [x] **Dependency Flow** (`codemap --deps`) — function/import analysis with 16 language support
 
