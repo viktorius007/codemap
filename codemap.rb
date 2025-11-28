@@ -81,32 +81,32 @@ class Codemap < Formula
     # Build and install each grammar resource
     resources.each do |r|
       r.stage do
-        lang = r.name.sub("tree-sitter-", "").gsub("-", "_")
-        
+        lang = r.name.sub("tree-sitter-", "").tr("-", "_")
+
         # Handle special source directories
         src_subdir = "src"
         src_subdir = "typescript/src" if lang == "typescript"
         src_subdir = "php/src" if lang == "php"
-        
+
         src_dir = Pathname.pwd/src_subdir
-        
+
         # Determine library extension and flags
         lib_ext = OS.mac? ? "dylib" : "so"
-        cflags = OS.mac? ? %W[-dynamiclib -fPIC] : %W[-shared -fPIC]
-        
+        cflags = OS.mac? ? %w[-dynamiclib -fPIC] : %w[-shared -fPIC]
+
         output_lib = libexec/"grammars/libtree-sitter-#{lang}.#{lib_ext}"
-        
+
         # Prepare sources
         sources = [src_dir/"parser.c"]
-        
+
         if (src_dir/"scanner.c").exist?
-          sources << src_dir/"scanner.c"
+          sources << (src_dir/"scanner.c")
         elsif (src_dir/"scanner.cc").exist?
           # Compile C++ scanner first
           system ENV.cxx, "-c", "-fPIC", src_dir/"scanner.cc", "-o", "scanner.o", "-I#{src_dir}"
           sources << "scanner.o"
         end
-        
+
         # Compile and link
         system ENV.cc, *cflags, "-o", output_lib, *sources, "-I#{src_dir}"
       end
