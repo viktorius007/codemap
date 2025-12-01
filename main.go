@@ -20,6 +20,7 @@ func main() {
 	diffMode := flag.Bool("diff", false, "Only show files changed vs main (or use --ref to specify branch)")
 	diffRef := flag.String("ref", "main", "Branch/ref to compare against (use with --diff)")
 	jsonMode := flag.Bool("json", false, "Output JSON (for Python renderer compatibility)")
+	debugMode := flag.Bool("debug", false, "Show debug info (gitignore loading, paths, etc.)")
 	helpMode := flag.Bool("help", false, "Show help")
 	flag.Parse()
 
@@ -59,6 +60,17 @@ func main() {
 
 	// Load .gitignore if it exists
 	gitignore := scanner.LoadGitignore(root)
+
+	if *debugMode {
+		fmt.Fprintf(os.Stderr, "[debug] Root path: %s\n", root)
+		fmt.Fprintf(os.Stderr, "[debug] Absolute path: %s\n", absRoot)
+		gitignorePath := filepath.Join(root, ".gitignore")
+		if gitignore != nil {
+			fmt.Fprintf(os.Stderr, "[debug] Loaded .gitignore from: %s\n", gitignorePath)
+		} else {
+			fmt.Fprintf(os.Stderr, "[debug] No .gitignore found at: %s\n", gitignorePath)
+		}
+	}
 
 	// Get changed files if --diff is specified
 	var diffInfo *scanner.DiffInfo
