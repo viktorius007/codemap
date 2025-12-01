@@ -295,6 +295,8 @@ Or add to your project's `.mcp.json`:
 
 **Claude Desktop:**
 
+> ⚠️ Claude Desktop cannot see your local files by default. This MCP server runs on your machine and gives Claude that ability.
+
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
@@ -310,6 +312,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 **MCP Tools:**
 | Tool | Description |
 |------|-------------|
+| `status` | Verify MCP connection and local filesystem access |
 | `get_structure` | Project tree view with file sizes and language detection |
 | `get_dependencies` | Dependency flow with imports, functions, and hub files |
 | `get_diff` | Changed files with line counts and impact analysis |
@@ -322,7 +325,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 - [x] **Skyline Mode** (`codemap --skyline`) — ASCII cityscape visualization
 - [x] **Dependency Flow** (`codemap --deps`) — function/import analysis with 16 language support
 - [x] **Claude Code Skill** — automatic invocation based on user questions
-- [x] **MCP Server** — deep integration with 5 tools for codebase analysis
+- [x] **MCP Server** — deep integration with 6 tools for codebase analysis
 
 ## Contributing
 

@@ -73,6 +73,12 @@ func main() {
 		Description: "Find all files that import/depend on a specific file. Use this to understand the impact of changing a file.",
 	}, handleGetImporters)
 
+	// Tool: status - Verify MCP connection
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "status",
+		Description: "Check codemap MCP server status. Returns version and confirms local filesystem access is available.",
+	}, handleStatus)
+
 	// Run server on stdio
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Printf("Server error: %v", err)
@@ -214,6 +220,27 @@ func handleFindFile(ctx context.Context, req *mcp.CallToolRequest, input FindInp
 	}
 
 	return textResult(fmt.Sprintf("Found %d files:\n%s", len(matches), strings.Join(matches, "\n"))), nil, nil
+}
+
+// EmptyInput for tools that don't need parameters
+type EmptyInput struct{}
+
+func handleStatus(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, any, error) {
+	cwd, _ := os.Getwd()
+	home := os.Getenv("HOME")
+
+	return textResult(fmt.Sprintf(`codemap MCP server v2.0.0
+Status: connected
+Local filesystem access: enabled
+Working directory: %s
+Home directory: %s
+
+Available tools:
+  get_structure  - Project tree view
+  get_dependencies - Import/function analysis
+  get_diff       - Changed files vs branch
+  find_file      - Search by filename
+  get_importers  - Find what imports a file`, cwd, home)), nil, nil
 }
 
 func handleGetImporters(ctx context.Context, req *mcp.CallToolRequest, input ImportersInput) (*mcp.CallToolResult, any, error) {
