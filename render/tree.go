@@ -133,7 +133,10 @@ func Tree(project scanner.Project) {
 		exts = append(exts, extEntry{ext, count})
 	}
 	sort.Slice(exts, func(i, j int) bool {
-		return exts[i].count > exts[j].count
+		if exts[i].count != exts[j].count {
+			return exts[i].count > exts[j].count
+		}
+		return exts[i].ext < exts[j].ext // alphabetical tiebreaker
 	})
 	if len(exts) > 5 {
 		exts = exts[:5]
@@ -142,8 +145,22 @@ func Tree(project scanner.Project) {
 	// Get top large files
 	topLarge := getTopLargeFiles(files)
 
+	// Build extension line first to calculate width
+	var extLine string
+	if len(exts) > 0 {
+		extParts := make([]string, len(exts))
+		for i, e := range exts {
+			extParts[i] = fmt.Sprintf("%s (%d)", e.ext, e.count)
+		}
+		extLine = "Top Extensions: " + strings.Join(extParts, ", ")
+	}
+
 	// Print header (match Python rich panel exactly - title in top border)
 	innerWidth := 64
+	// Expand width if extension line is longer
+	if len(extLine)+4 > innerWidth {
+		innerWidth = len(extLine) + 4
+	}
 
 	// Title in top border line (like rich panel)
 	titleLine := fmt.Sprintf(" %s ", projectName)
@@ -166,12 +183,7 @@ func Tree(project scanner.Project) {
 	fmt.Printf("│ %-*s │\n", innerWidth-2, statsLine)
 
 	// Extensions line
-	if len(exts) > 0 {
-		extParts := make([]string, len(exts))
-		for i, e := range exts {
-			extParts[i] = fmt.Sprintf("%s (%d)", e.ext, e.count)
-		}
-		extLine := "Top Extensions: " + strings.Join(extParts, ", ")
+	if extLine != "" {
 		fmt.Printf("│ %-*s │\n", innerWidth-2, extLine)
 	}
 
