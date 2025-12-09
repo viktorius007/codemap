@@ -56,7 +56,7 @@ jobs:
           MINOR="${REST%%.*}"
           PATCH="${REST#*.}"
 
-          if [ "$PATCH" = "$MINOR" ]; then
+          if [ "$PATCH" = "$REST" ]; then
             PATCH="0"
           fi
 
