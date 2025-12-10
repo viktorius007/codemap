@@ -10,3 +10,48 @@ id: go-functions
 language: go
 rule:
   kind: function_declaration
+---
+id: go-structs
+language: go
+rule:
+  kind: type_declaration
+  has:
+    kind: type_spec
+    has:
+      kind: struct_type
+---
+id: go-interfaces
+language: go
+rule:
+  kind: type_declaration
+  has:
+    kind: type_spec
+    has:
+      kind: interface_type
+---
+id: go-methods
+language: go
+rule:
+  kind: method_declaration
+---
+id: go-constants
+language: go
+rule:
+  kind: const_declaration
+---
+id: go-types
+language: go
+rule:
+  kind: type_declaration
+  has:
+    kind: type_spec
+    not:
+      has:
+        any:
+          - kind: struct_type
+          - kind: interface_type
+---
+id: go-vars
+language: go
+rule:
+  kind: var_declaration

@@ -156,6 +156,32 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 			if name != "" {
 				fileMap[relPath].Functions = append(fileMap[relPath].Functions, name)
 			}
+		} else if strings.HasSuffix(m.RuleID, "-structs") {
+			name := extractStructName(m.Text, fileMap[relPath].Language)
+			if name != "" {
+				fileMap[relPath].Structs = append(fileMap[relPath].Structs, name)
+			}
+		} else if strings.HasSuffix(m.RuleID, "-interfaces") {
+			name := extractInterfaceName(m.Text, fileMap[relPath].Language)
+			if name != "" {
+				fileMap[relPath].Interfaces = append(fileMap[relPath].Interfaces, name)
+			}
+		} else if strings.HasSuffix(m.RuleID, "-methods") {
+			name := extractMethodName(m.Text, fileMap[relPath].Language)
+			if name != "" {
+				fileMap[relPath].Methods = append(fileMap[relPath].Methods, name)
+			}
+		} else if strings.HasSuffix(m.RuleID, "-constants") {
+			names := extractConstantNames(m.Text, fileMap[relPath].Language)
+			fileMap[relPath].Constants = append(fileMap[relPath].Constants, names...)
+		} else if strings.HasSuffix(m.RuleID, "-types") {
+			name := extractTypeName(m.Text, fileMap[relPath].Language)
+			if name != "" {
+				fileMap[relPath].Types = append(fileMap[relPath].Types, name)
+			}
+		} else if strings.HasSuffix(m.RuleID, "-vars") {
+			names := extractVarNames(m.Text, fileMap[relPath].Language)
+			fileMap[relPath].Vars = append(fileMap[relPath].Vars, names...)
 		}
 	}
 
@@ -164,6 +190,12 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	for _, a := range fileMap {
 		a.Functions = dedupe(a.Functions)
 		a.Imports = dedupe(a.Imports)
+		a.Structs = dedupe(a.Structs)
+		a.Interfaces = dedupe(a.Interfaces)
+		a.Methods = dedupe(a.Methods)
+		a.Constants = dedupe(a.Constants)
+		a.Types = dedupe(a.Types)
+		a.Vars = dedupe(a.Vars)
 		results = append(results, *a)
 	}
 
@@ -416,6 +448,177 @@ func extractFunctionName(text string, lang string) string {
 	}
 
 	return ""
+}
+
+func extractStructName(text string, lang string) string {
+	// Go: type Name struct { ... }
+	if lang == "go" {
+		if idx := strings.Index(text, "type "); idx >= 0 {
+			text = text[idx+5:]
+			if space := strings.IndexAny(text, " \t"); space > 0 {
+				return strings.TrimSpace(text[:space])
+			}
+		}
+	}
+	// Add other languages as needed
+	return ""
+}
+
+func extractInterfaceName(text string, lang string) string {
+	// Same pattern as struct for Go
+	if lang == "go" {
+		if idx := strings.Index(text, "type "); idx >= 0 {
+			text = text[idx+5:]
+			if space := strings.IndexAny(text, " \t"); space > 0 {
+				return strings.TrimSpace(text[:space])
+			}
+		}
+	}
+	return ""
+}
+
+func extractMethodName(text string, lang string) string {
+	// Go: func (r *Receiver) Name(...) ...
+	if lang == "go" {
+		if strings.HasPrefix(text, "func ") {
+			text = strings.TrimPrefix(text, "func ")
+			// Skip receiver: (r *Type)
+			if strings.HasPrefix(text, "(") {
+				if idx := strings.Index(text, ")"); idx > 0 {
+					text = strings.TrimSpace(text[idx+1:])
+				}
+			}
+			// Get method name
+			if paren := strings.Index(text, "("); paren > 0 {
+				return strings.TrimSpace(text[:paren])
+			}
+		}
+	}
+	return ""
+}
+
+func extractConstantNames(text string, lang string) []string {
+	var names []string
+	// Go: const Name = value OR const ( Name = value; Name2 = value2 )
+	if lang == "go" {
+		text = strings.TrimPrefix(text, "const ")
+		text = strings.TrimSpace(text)
+		// Handle const block: const ( ... )
+		if strings.HasPrefix(text, "(") {
+			// Parse const block - extract each identifier before = or newline
+			text = strings.TrimPrefix(text, "(")
+			text = strings.TrimSuffix(text, ")")
+			lines := strings.Split(text, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "//") {
+					continue
+				}
+				// Handle: Name = value or Name Type = value
+				if eq := strings.Index(line, "="); eq > 0 {
+					part := strings.TrimSpace(line[:eq])
+					fields := strings.Fields(part)
+					if len(fields) > 0 {
+						name := fields[0]
+						if isValidIdentifier(name) {
+							names = append(names, name)
+						}
+					}
+				} else {
+					// Handle: Name (for iota patterns)
+					fields := strings.Fields(line)
+					if len(fields) > 0 {
+						name := fields[0]
+						if isValidIdentifier(name) {
+							names = append(names, name)
+						}
+					}
+				}
+			}
+		} else {
+			// Single const: const Name = value or const Name Type = value
+			if eq := strings.Index(text, "="); eq > 0 {
+				part := strings.TrimSpace(text[:eq])
+				fields := strings.Fields(part)
+				if len(fields) > 0 {
+					name := fields[0]
+					if isValidIdentifier(name) {
+						names = append(names, name)
+					}
+				}
+			}
+		}
+	}
+	return names
+}
+
+func extractTypeName(text string, lang string) string {
+	// Same as struct/interface extraction for Go type aliases
+	return extractStructName(text, lang)
+}
+
+func extractVarNames(text string, lang string) []string {
+	var names []string
+	// Go: var Name = value OR var ( Name = value; Name2 = value2 )
+	if lang == "go" {
+		text = strings.TrimPrefix(text, "var ")
+		text = strings.TrimSpace(text)
+		// Handle var block: var ( ... )
+		if strings.HasPrefix(text, "(") {
+			// Parse var block - extract each identifier before = or type
+			text = strings.TrimPrefix(text, "(")
+			text = strings.TrimSuffix(text, ")")
+			lines := strings.Split(text, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "//") {
+					continue
+				}
+				// Handle: Name = value or Name Type = value or Name Type
+				if eq := strings.Index(line, "="); eq > 0 {
+					part := strings.TrimSpace(line[:eq])
+					fields := strings.Fields(part)
+					if len(fields) > 0 {
+						name := fields[0]
+						if isValidIdentifier(name) {
+							names = append(names, name)
+						}
+					}
+				} else {
+					// Handle: Name Type (no initializer)
+					fields := strings.Fields(line)
+					if len(fields) > 0 {
+						name := fields[0]
+						if isValidIdentifier(name) {
+							names = append(names, name)
+						}
+					}
+				}
+			}
+		} else {
+			// Single var: var Name = value or var Name Type = value or var Name Type
+			if eq := strings.Index(text, "="); eq > 0 {
+				part := strings.TrimSpace(text[:eq])
+				fields := strings.Fields(part)
+				if len(fields) > 0 {
+					name := fields[0]
+					if isValidIdentifier(name) {
+						names = append(names, name)
+					}
+				}
+			} else {
+				// No initializer: var Name Type
+				fields := strings.Fields(text)
+				if len(fields) > 0 {
+					name := fields[0]
+					if isValidIdentifier(name) {
+						names = append(names, name)
+					}
+				}
+			}
+		}
+	}
+	return names
 }
 
 func isValidIdentifier(s string) bool {

@@ -42,6 +42,7 @@ codemap --deps .             # Dependency flow
 | `--diff` | Show files changed vs main branch |
 | `--ref <branch>` | Branch to compare against (with --diff) |
 | `--deps` | Dependency flow mode |
+| `--symbols` | Show code symbols (functions, types, structs) |
 | `--importers <file>` | Check who imports a file |
 | `--skyline` | City skyline visualization |
 | `--json` | Output JSON |
@@ -93,6 +94,25 @@ Backend ════════════════════════
   api ───▶ handlers, middleware
 
 HUBS: config (12←), api (8←), utils (5←)
+```
+
+### Symbols Mode
+
+See code symbols (functions, structs, interfaces, etc.):
+
+```bash
+codemap --symbols .
+```
+
+```
+scanner/types.go
+  Functions: DetectLanguage, dedupe
+  Structs: FileInfo, Project, FileAnalysis, DepsProject
+
+scanner/walker.go
+  Functions: NewGitIgnoreCache, LoadGitignore, ScanFiles
+  Methods: tryLoadGitignore, ShouldIgnore
+  Structs: GitIgnoreCache
 ```
 
 ### Skyline Mode

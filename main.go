@@ -63,6 +63,7 @@ func main() {
 	debugMode := flag.Bool("debug", false, "Show debug info (gitignore loading, paths, etc.)")
 	watchMode := flag.Bool("watch", false, "Live file watcher daemon (experimental)")
 	importersMode := flag.String("importers", "", "Check file impact: who imports it, is it a hub?")
+	symbolsMode := flag.Bool("symbols", false, "Show code symbols (functions, types, structs, etc.)")
 	helpMode := flag.Bool("help", false, "Show help")
 	// Short flag aliases
 	flag.IntVar(depthLimit, "d", 0, "Limit tree depth (shorthand)")
@@ -84,6 +85,7 @@ func main() {
 		fmt.Println("  --only <exts>       Only show files with these extensions (e.g., 'swift,go')")
 		fmt.Println("  --exclude <patterns> Exclude paths matching patterns (e.g., '.xcassets,Fonts')")
 		fmt.Println("  --importers <file>  Check file impact (who imports it, hub status)")
+		fmt.Println("  --symbols           Show code symbols (functions, types, structs, etc.)")
 		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Println("  codemap .                       # Basic tree view")
@@ -153,6 +155,12 @@ func main() {
 	// Importers mode - check file impact
 	if *importersMode != "" {
 		runImportersMode(absRoot, *importersMode)
+		return
+	}
+
+	// Symbols mode - show code symbols
+	if *symbolsMode {
+		runSymbolsMode(absRoot, root)
 		return
 	}
 
@@ -439,4 +447,28 @@ func runDaemon(root string) {
 
 	daemon.Stop()
 	watch.RemovePID(root)
+}
+
+func runSymbolsMode(absRoot, root string) {
+	sg, err := scanner.NewAstGrepScanner()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing scanner: %v\n", err)
+		os.Exit(1)
+	}
+	defer sg.Close()
+
+	if !sg.Available() {
+		fmt.Fprintln(os.Stderr, "ast-grep (sg) not found. Install via:")
+		fmt.Fprintln(os.Stderr, "  brew install ast-grep    # macOS/Linux")
+		fmt.Fprintln(os.Stderr, "  cargo install ast-grep   # via Rust")
+		os.Exit(1)
+	}
+
+	analyses, err := sg.ScanDirectory(absRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error scanning: %v\n", err)
+		os.Exit(1)
+	}
+
+	render.Symbols(analyses)
 }

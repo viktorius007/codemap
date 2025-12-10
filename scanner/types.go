@@ -30,10 +30,16 @@ type Project struct {
 
 // FileAnalysis holds extracted info about a single file for deps mode.
 type FileAnalysis struct {
-	Path      string   `json:"path"`
-	Language  string   `json:"language"`
-	Functions []string `json:"functions"`
-	Imports   []string `json:"imports"`
+	Path       string   `json:"path"`
+	Language   string   `json:"language"`
+	Functions  []string `json:"functions,omitempty"`
+	Imports    []string `json:"imports,omitempty"`
+	Structs    []string `json:"structs,omitempty"`    // struct/class names
+	Interfaces []string `json:"interfaces,omitempty"` // interface names
+	Types      []string `json:"types,omitempty"`      // type aliases
+	Constants  []string `json:"constants,omitempty"`  // const declarations
+	Methods    []string `json:"methods,omitempty"`    // methods with receivers (Go)
+	Vars       []string `json:"vars,omitempty"`       // package-level variables (Go)
 }
 
 // DepsProject is the JSON output for --deps mode.
