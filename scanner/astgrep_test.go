@@ -2023,3 +2023,195 @@ enum Color { Red, Green, Blue }
 		t.Error("Expected some symbols to have non-global scope, but all are global")
 	}
 }
+
+func TestJavaScriptPrivateFields(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil || !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+	defer scanner.Close()
+
+	tmpDir := t.TempDir()
+	jsFile := filepath.Join(tmpDir, "private.js")
+	os.WriteFile(jsFile, []byte(`
+class MyClass {
+    #privateField = "secret";
+    publicField = "public";
+
+    #privateMethod() {
+        return this.#privateField;
+    }
+
+    publicMethod() {
+        return this.#privateMethod();
+    }
+}
+`), 0644)
+
+	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	if err != nil {
+		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("Expected results, got none")
+	}
+
+	// Check for private fields and methods
+	foundPrivateField := false
+	foundPrivateMethod := false
+	for _, file := range results {
+		for _, sym := range file.Symbols {
+			if sym.Name == "#privateField" && sym.Kind == KindField {
+				foundPrivateField = true
+			}
+			if sym.Name == "#privateMethod" && sym.Kind == KindMethod {
+				foundPrivateMethod = true
+			}
+		}
+	}
+
+	if !foundPrivateField {
+		t.Error("Expected to find #privateField")
+	}
+	if !foundPrivateMethod {
+		t.Error("Expected to find #privateMethod")
+	}
+}
+
+func TestJavaScriptDecoratedMethods(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil || !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+	defer scanner.Close()
+
+	tmpDir := t.TempDir()
+	jsFile := filepath.Join(tmpDir, "decorated.js")
+	os.WriteFile(jsFile, []byte(`
+function MyDecorator(target) {}
+
+class DecoratedClass {
+    @MyDecorator
+    decoratedField = 1;
+
+    @MyDecorator
+    decoratedMethod() {}
+
+    regularMethod() {}
+}
+`), 0644)
+
+	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	if err != nil {
+		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("Expected results, got none")
+	}
+
+	// Check for decorated method
+	foundDecoratedMethod := false
+	foundDecoratedField := false
+	for _, file := range results {
+		for _, sym := range file.Symbols {
+			if sym.Name == "decoratedMethod" && sym.Kind == KindMethod {
+				foundDecoratedMethod = true
+			}
+			if sym.Name == "decoratedField" && sym.Kind == KindField {
+				foundDecoratedField = true
+			}
+		}
+	}
+
+	if !foundDecoratedMethod {
+		t.Error("Expected to find decoratedMethod")
+	}
+	if !foundDecoratedField {
+		t.Error("Expected to find decoratedField")
+	}
+}
+
+func TestJavaScriptComputedMethods(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil || !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+	defer scanner.Close()
+
+	tmpDir := t.TempDir()
+	jsFile := filepath.Join(tmpDir, "computed.js")
+	os.WriteFile(jsFile, []byte(`
+const methodName = "dynamicMethod";
+
+class WithComputed {
+    [methodName]() {}
+    ["literalMethod"]() {}
+    regularMethod() {}
+}
+`), 0644)
+
+	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	if err != nil {
+		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("Expected results, got none")
+	}
+
+	// Check for computed methods
+	foundComputedVar := false
+	foundComputedLiteral := false
+	foundRegular := false
+	for _, file := range results {
+		for _, sym := range file.Symbols {
+			if sym.Name == "[methodName]" && sym.Kind == KindMethod {
+				foundComputedVar = true
+			}
+			if sym.Name == "[literalMethod]" && sym.Kind == KindMethod {
+				foundComputedLiteral = true
+			}
+			if sym.Name == "regularMethod" && sym.Kind == KindMethod {
+				foundRegular = true
+			}
+		}
+	}
+
+	if !foundComputedVar {
+		t.Error("Expected to find [methodName] computed method")
+	}
+	if !foundComputedLiteral {
+		t.Error("Expected to find [literalMethod] computed method")
+	}
+	if !foundRegular {
+		t.Error("Expected to find regularMethod")
+	}
+}
+
+func TestIsValidIdentifierWithPrivate(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"foo", true},
+		{"_bar", true},
+		{"Baz123", true},
+		{"#privateField", true},
+		{"#_private", true},
+		{"123invalid", false},
+		{"", false},
+		{"foo-bar", false},
+		{"##double", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := isValidIdentifier(tt.input)
+			if result != tt.expected {
+				t.Errorf("isValidIdentifier(%q) = %v, want %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

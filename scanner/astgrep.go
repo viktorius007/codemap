@@ -1031,6 +1031,14 @@ func extractMethodName(text string, lang string) string {
 	// TypeScript/JavaScript: methodName(...) { ... } or async methodName(...) or get/set name()
 	if lang == "typescript" || lang == "javascript" {
 		text = strings.TrimSpace(text)
+		// Strip decorators at the start (lines starting with @)
+		for strings.HasPrefix(text, "@") {
+			if newline := strings.Index(text, "\n"); newline > 0 {
+				text = strings.TrimSpace(text[newline+1:])
+			} else {
+				break
+			}
+		}
 		// Strip modifiers (loop to handle multiple)
 		for {
 			found := false
@@ -1050,6 +1058,17 @@ func extractMethodName(text string, lang string) string {
 		// Handle generator: *methodName()
 		text = strings.TrimPrefix(text, "*")
 		text = strings.TrimSpace(text)
+		// Handle computed property names: [expr]() or ["literal"]()
+		if strings.HasPrefix(text, "[") {
+			if closeIdx := strings.Index(text, "]"); closeIdx > 0 {
+				inner := text[1:closeIdx]
+				// Remove quotes if present
+				inner = strings.Trim(inner, "\"'`")
+				if inner != "" {
+					return "[" + inner + "]"
+				}
+			}
+		}
 		// Get method name (up to parenthesis or <)
 		for i, c := range text {
 			if c == '(' || c == '<' {
@@ -1818,7 +1837,8 @@ func isValidIdentifier(s string) bool {
 	}
 	for i, c := range s {
 		if i == 0 {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+			// Allow # prefix for JavaScript/TypeScript private fields
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '#') {
 				return false
 			}
 		} else {
