@@ -1,12 +1,14 @@
 package scanner
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 //go:embed sg-rules/*.yml
@@ -316,6 +318,382 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	}
 
 	return results, nil
+}
+
+// ScanDirectoryV2 analyzes all files using the enhanced Symbol struct with metadata
+func (s *AstGrepScanner) ScanDirectoryV2(root string, includeRefs bool) ([]FileAnalysisV2, error) {
+	if !s.Available() {
+		return nil, nil
+	}
+
+	// Create file cache for scope resolution
+	cache := newFileCache()
+
+	// Extract scope containers first (two-pass approach)
+	containers, err := s.extractScopeContainers(root, cache)
+	if err != nil {
+		// Continue without scope resolution if container extraction fails
+		containers = make(map[string][]ScopeContainer)
+	}
+
+	// Combine all rules into one string with --- separators
+	var rules []string
+	entries, _ := os.ReadDir(s.rulesDir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".yml") && e.Name() != "sgconfig.yml" {
+			// Skip reference rules unless requested
+			if !includeRefs && strings.Contains(e.Name(), "-refs") {
+				continue
+			}
+			// Skip container rules (they're only used for scope extraction)
+			if strings.Contains(e.Name(), "-containers") {
+				continue
+			}
+			content, err := os.ReadFile(filepath.Join(s.rulesDir, e.Name()))
+			if err == nil {
+				rules = append(rules, string(content))
+			}
+		}
+	}
+	inlineRules := strings.Join(rules, "\n---\n")
+
+	cmd := exec.Command(s.binary, "scan", "--inline-rules", inlineRules, "--json", root)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(out) == 0 || !strings.HasPrefix(string(out), "[") {
+			return nil, nil
+		}
+	}
+
+	var matches []ScanMatch
+	if err := json.Unmarshal(out, &matches); err != nil {
+		return nil, err
+	}
+
+	// Group matches by file
+	fileMap := make(map[string]*FileAnalysisV2)
+
+	for _, m := range matches {
+		relPath, _ := filepath.Rel(root, m.File)
+		if relPath == "" {
+			relPath = m.File
+		}
+
+		if fileMap[relPath] == nil {
+			lang := detectLangFromRuleID(m.RuleID)
+			fileMap[relPath] = &FileAnalysisV2{
+				Path:     relPath,
+				Language: lang,
+				Symbols:  []Symbol{},
+			}
+		}
+
+		// Extract symbol with full metadata
+		sym := extractSymbolV2(m, fileMap[relPath].Language)
+		if sym.Name != "" {
+			// Resolve scope using container ranges
+			if fileContainers, ok := containers[relPath]; ok && len(fileContainers) > 0 {
+				sym.Scope = findContainingScope(sym.Line, fileContainers)
+			}
+			fileMap[relPath].Symbols = append(fileMap[relPath].Symbols, sym)
+		}
+	}
+
+	// Convert map to slice and dedupe
+	var results []FileAnalysisV2
+	for _, a := range fileMap {
+		a.Symbols = dedupeSymbols(a.Symbols)
+		results = append(results, *a)
+	}
+
+	return results, nil
+}
+
+// extractSymbolV2 creates a Symbol struct with full metadata from a match
+func extractSymbolV2(m ScanMatch, lang string) Symbol {
+	sym := Symbol{
+		Line:   m.Range.Start.Line,
+		Column: m.Range.Start.Column,
+		Role:   determineRole(m.RuleID),
+		Kind:   determineKind(m.RuleID),
+		Scope:  "global", // Default scope
+	}
+
+	// Extract name based on rule type
+	switch {
+	case strings.HasSuffix(m.RuleID, "-imports"):
+		if pathVar, ok := m.MetaVariables.Single["PATH"]; ok && pathVar.Text != "" {
+			sym.Name = pathVar.Text
+		} else {
+			sym.Name = extractImportPath(m.Text)
+		}
+	case strings.HasSuffix(m.RuleID, "-arrow-functions"):
+		sym.Name = extractArrowFunctionName(m.Lines, lang)
+	case strings.HasSuffix(m.RuleID, "-function-signatures"):
+		sym.Name = extractFunctionSignatureName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-generator-functions"):
+		sym.Name = extractGeneratorFunctionName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-functions"):
+		sym.Name = extractFunctionName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-structs"), strings.HasSuffix(m.RuleID, "-classes"):
+		sym.Name = extractStructName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-interfaces"):
+		sym.Name = extractInterfaceName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-methods"):
+		sym.Name = extractMethodName(m.Text, lang)
+		sym.Scope = extractScopeFromContext(m.Lines, lang)
+	case strings.HasSuffix(m.RuleID, "-method-signatures"):
+		sym.Name = extractMethodSignatureName(m.Text, lang)
+		sym.Scope = extractScopeFromContext(m.Lines, lang)
+	case strings.HasSuffix(m.RuleID, "-constants"):
+		names := extractConstantNames(m.Text, lang)
+		if len(names) > 0 {
+			sym.Name = names[0] // First constant
+		}
+	case strings.HasSuffix(m.RuleID, "-types"):
+		sym.Name = extractTypeName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-vars"):
+		names := extractVarNames(m.Text, lang)
+		if len(names) > 0 {
+			sym.Name = names[0]
+		}
+	case strings.HasSuffix(m.RuleID, "-enums"):
+		sym.Name = extractEnumName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-lexical"):
+		text := strings.TrimSpace(m.Text)
+		if strings.HasPrefix(text, "const ") {
+			names := extractConstantNames(m.Text, lang)
+			if len(names) > 0 {
+				sym.Name = names[0]
+				sym.Kind = KindConstant
+			}
+		} else {
+			names := extractVarNames(m.Text, lang)
+			if len(names) > 0 {
+				sym.Name = names[0]
+				sym.Kind = KindVariable
+			}
+		}
+	case strings.HasSuffix(m.RuleID, "-namespaces"):
+		sym.Name = extractNamespaceName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-property-signatures"):
+		sym.Name = extractPropertySignatureName(m.Text, lang)
+		sym.Scope = extractScopeFromContext(m.Lines, lang)
+	case strings.HasSuffix(m.RuleID, "-field-definitions"):
+		sym.Name = extractFieldDefinitionName(m.Text, lang)
+		sym.Scope = extractScopeFromContext(m.Lines, lang)
+	case strings.HasSuffix(m.RuleID, "-decorators"):
+		sym.Name = extractDecoratorName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-import-aliases"):
+		sym.Name = extractImportAliasName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-call-signatures"):
+		sym.Name = extractCallSignature(m.Text)
+	case strings.HasSuffix(m.RuleID, "-construct-signatures"):
+		sym.Name = extractConstructSignature(m.Text)
+	case strings.HasSuffix(m.RuleID, "-index-signatures"):
+		sym.Name = extractIndexSignature(m.Text)
+	case strings.HasSuffix(m.RuleID, "-variable-declarations"):
+		names := extractVarDeclarationNames(m.Text, lang)
+		if len(names) > 0 {
+			sym.Name = names[0]
+		}
+	case strings.HasSuffix(m.RuleID, "-function-expressions"):
+		sym.Name = extractFunctionExpressionName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-static-blocks"):
+		sym.Name = "(static block)"
+	// Reference rules
+	case strings.HasSuffix(m.RuleID, "-ref-function-calls"):
+		sym.Name = extractCallExpressionName(m.Text)
+	case strings.HasSuffix(m.RuleID, "-ref-new-expressions"):
+		sym.Name = extractNewExpressionName(m.Text)
+	case strings.HasSuffix(m.RuleID, "-ref-type-references"):
+		sym.Name = extractTypeReferenceName(m.Text)
+	}
+
+	// Extract modifiers if present
+	sym.Modifiers = extractModifiers(m.Text, lang)
+
+	return sym
+}
+
+// determineRole returns whether a rule captures definitions or references
+func determineRole(ruleID string) SymbolRole {
+	if strings.Contains(ruleID, "-ref-") {
+		return RoleReference
+	}
+	return RoleDefinition
+}
+
+// determineKind maps rule IDs to symbol kinds
+func determineKind(ruleID string) SymbolKind {
+	switch {
+	case strings.HasSuffix(ruleID, "-imports"), strings.HasSuffix(ruleID, "-import-aliases"):
+		return KindImport
+	case strings.HasSuffix(ruleID, "-functions"), strings.HasSuffix(ruleID, "-arrow-functions"),
+		strings.HasSuffix(ruleID, "-function-signatures"), strings.HasSuffix(ruleID, "-generator-functions"),
+		strings.HasSuffix(ruleID, "-function-expressions"), strings.HasSuffix(ruleID, "-ref-function-calls"):
+		return KindFunction
+	case strings.HasSuffix(ruleID, "-methods"), strings.HasSuffix(ruleID, "-method-signatures"),
+		strings.HasSuffix(ruleID, "-call-signatures"), strings.HasSuffix(ruleID, "-construct-signatures"),
+		strings.HasSuffix(ruleID, "-static-blocks"):
+		return KindMethod
+	case strings.HasSuffix(ruleID, "-structs"), strings.HasSuffix(ruleID, "-classes"),
+		strings.HasSuffix(ruleID, "-ref-new-expressions"):
+		return KindClass
+	case strings.HasSuffix(ruleID, "-interfaces"):
+		return KindInterface
+	case strings.HasSuffix(ruleID, "-types"), strings.HasSuffix(ruleID, "-ref-type-references"):
+		return KindType
+	case strings.HasSuffix(ruleID, "-enums"):
+		return KindEnum
+	case strings.HasSuffix(ruleID, "-namespaces"):
+		return KindNamespace
+	case strings.HasSuffix(ruleID, "-constants"):
+		return KindConstant
+	case strings.HasSuffix(ruleID, "-vars"), strings.HasSuffix(ruleID, "-variable-declarations"):
+		return KindVariable
+	case strings.HasSuffix(ruleID, "-lexical"):
+		return KindVariable // Will be refined in extractSymbolV2
+	case strings.HasSuffix(ruleID, "-field-definitions"):
+		return KindField
+	case strings.HasSuffix(ruleID, "-property-signatures"), strings.HasSuffix(ruleID, "-index-signatures"):
+		return KindProperty
+	case strings.HasSuffix(ruleID, "-decorators"):
+		return KindDecorator
+	}
+	return KindVariable // Default
+}
+
+// extractScopeFromContext attempts to determine scope from surrounding code context
+func extractScopeFromContext(lines string, lang string) string {
+	if lang != "typescript" && lang != "javascript" {
+		return "global"
+	}
+
+	// Look for class context in the lines
+	if strings.Contains(lines, "class ") {
+		// Try to extract class name
+		idx := strings.Index(lines, "class ")
+		if idx >= 0 {
+			rest := lines[idx+6:]
+			for i, c := range rest {
+				if c == ' ' || c == '<' || c == '{' || c == '\n' {
+					className := strings.TrimSpace(rest[:i])
+					if isValidIdentifier(className) {
+						return "class:" + className
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// Look for interface context
+	if strings.Contains(lines, "interface ") {
+		idx := strings.Index(lines, "interface ")
+		if idx >= 0 {
+			rest := lines[idx+10:]
+			for i, c := range rest {
+				if c == ' ' || c == '<' || c == '{' || c == '\n' {
+					ifaceName := strings.TrimSpace(rest[:i])
+					if isValidIdentifier(ifaceName) {
+						return "interface:" + ifaceName
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return "global"
+}
+
+// extractModifiers extracts modifiers from code text
+// Only looks at the first line to avoid picking up modifiers from nested content
+func extractModifiers(text string, lang string) []string {
+	var mods []string
+	if lang != "typescript" && lang != "javascript" {
+		return mods
+	}
+
+	// Only look at the first line to avoid matching modifiers in method bodies
+	firstLine := text
+	if newlineIdx := strings.Index(text, "\n"); newlineIdx > 0 {
+		firstLine = text[:newlineIdx]
+	}
+	// Also limit to content before opening brace
+	if braceIdx := strings.Index(firstLine, "{"); braceIdx > 0 {
+		firstLine = firstLine[:braceIdx]
+	}
+
+	modifiers := []string{"public", "private", "protected", "static", "readonly", "async", "abstract", "override", "export", "default"}
+	for _, mod := range modifiers {
+		// Check if modifier appears as a word (followed by space)
+		if strings.Contains(firstLine, mod+" ") || strings.HasPrefix(firstLine, mod+" ") {
+			mods = append(mods, mod)
+		}
+	}
+	return mods
+}
+
+// extractCallExpressionName extracts function name from a call expression
+func extractCallExpressionName(text string) string {
+	text = strings.TrimSpace(text)
+	// Find the opening paren
+	parenIdx := strings.Index(text, "(")
+	if parenIdx < 0 {
+		return ""
+	}
+	name := strings.TrimSpace(text[:parenIdx])
+	// Handle member expressions: obj.method() -> method
+	if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+		name = name[dotIdx+1:]
+	}
+	// Handle optional chaining: obj?.method() -> method
+	if qIdx := strings.LastIndex(name, "?"); qIdx >= 0 {
+		name = name[qIdx+1:]
+	}
+	if isValidIdentifier(name) {
+		return name
+	}
+	return ""
+}
+
+// extractNewExpressionName extracts class name from a new expression
+func extractNewExpressionName(text string) string {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "new ") {
+		return ""
+	}
+	text = strings.TrimPrefix(text, "new ")
+	// Find end of class name (up to < or ()
+	for i, c := range text {
+		if c == '(' || c == '<' || c == ' ' {
+			name := strings.TrimSpace(text[:i])
+			if isValidIdentifier(name) {
+				return name
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// extractTypeReferenceName extracts type name from a type reference
+func extractTypeReferenceName(text string) string {
+	text = strings.TrimSpace(text)
+	// Handle generic types: Array<T> -> Array
+	if bracketIdx := strings.Index(text, "<"); bracketIdx > 0 {
+		text = text[:bracketIdx]
+	}
+	// Handle qualified names: Namespace.Type -> Type
+	if dotIdx := strings.LastIndex(text, "."); dotIdx >= 0 {
+		text = text[dotIdx+1:]
+	}
+	if isValidIdentifier(text) {
+		return text
+	}
+	return ""
 }
 
 func detectLangFromRuleID(ruleID string) string {
@@ -1450,6 +1828,244 @@ func isValidIdentifier(s string) bool {
 		}
 	}
 	return true
+}
+
+// fileCache provides thread-safe caching of file contents
+type fileCache struct {
+	content map[string][]byte
+	mu      sync.RWMutex
+}
+
+func newFileCache() *fileCache {
+	return &fileCache{content: make(map[string][]byte)}
+}
+
+func (c *fileCache) get(path string) ([]byte, error) {
+	c.mu.RLock()
+	if data, ok := c.content[path]; ok {
+		c.mu.RUnlock()
+		return data, nil
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Double-check after acquiring write lock
+	if data, ok := c.content[path]; ok {
+		return data, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	c.content[path] = data
+	return data, nil
+}
+
+// extractScopeContainers runs ast-grep to find all scope-creating containers
+// and returns them grouped by file path
+func (s *AstGrepScanner) extractScopeContainers(root string, cache *fileCache) (map[string][]ScopeContainer, error) {
+	if !s.Available() {
+		return nil, nil
+	}
+
+	// Build inline rules for containers only
+	var containerRules []string
+	entries, _ := os.ReadDir(s.rulesDir)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "-containers") && strings.HasSuffix(e.Name(), ".yml") {
+			content, err := os.ReadFile(filepath.Join(s.rulesDir, e.Name()))
+			if err == nil {
+				containerRules = append(containerRules, string(content))
+			}
+		}
+	}
+
+	if len(containerRules) == 0 {
+		return make(map[string][]ScopeContainer), nil
+	}
+
+	inlineRules := strings.Join(containerRules, "\n---\n")
+	cmd := exec.Command(s.binary, "scan", "--inline-rules", inlineRules, "--json", root)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(out) == 0 || !strings.HasPrefix(string(out), "[") {
+			return make(map[string][]ScopeContainer), nil
+		}
+	}
+
+	var matches []ScanMatch
+	if err := json.Unmarshal(out, &matches); err != nil {
+		return nil, err
+	}
+
+	// Group containers by file
+	result := make(map[string][]ScopeContainer)
+	for _, m := range matches {
+		relPath, _ := filepath.Rel(root, m.File)
+		if relPath == "" {
+			relPath = m.File
+		}
+
+		container := parseContainerMatch(m, cache)
+		if container.Name != "" {
+			result[relPath] = append(result[relPath], container)
+		}
+	}
+
+	return result, nil
+}
+
+// parseContainerMatch extracts a ScopeContainer from an ast-grep match
+func parseContainerMatch(m ScanMatch, cache *fileCache) ScopeContainer {
+	container := ScopeContainer{
+		StartLine: m.Range.Start.Line, // 0-indexed, matching symbol line numbers
+	}
+
+	// Determine kind from rule ID
+	switch {
+	case strings.Contains(m.RuleID, "-container-class"):
+		container.Kind = "class"
+	case strings.Contains(m.RuleID, "-container-interface"):
+		container.Kind = "interface"
+	case strings.Contains(m.RuleID, "-container-namespace"):
+		container.Kind = "namespace"
+	case strings.Contains(m.RuleID, "-container-enum"):
+		container.Kind = "enum"
+	default:
+		return container
+	}
+
+	// Extract name from the match text
+	container.Name = extractContainerName(m.Text, container.Kind)
+	if container.Name == "" {
+		return container
+	}
+
+	// Find end line by counting braces
+	content, err := cache.get(m.File)
+	if err != nil {
+		// Fallback: estimate from match text
+		container.EndLine = container.StartLine + strings.Count(m.Text, "\n")
+		return container
+	}
+
+	container.EndLine = findEndLine(content, container.StartLine)
+	return container
+}
+
+// extractContainerName extracts the name from container declaration text
+func extractContainerName(text string, kind string) string {
+	text = strings.TrimSpace(text)
+
+	// Skip decorators at the start
+	for strings.HasPrefix(text, "@") {
+		if newline := strings.Index(text, "\n"); newline > 0 {
+			text = strings.TrimSpace(text[newline+1:])
+		} else {
+			break
+		}
+	}
+
+	// Strip common prefixes
+	text = strings.TrimPrefix(text, "export ")
+	text = strings.TrimPrefix(text, "default ")
+	text = strings.TrimPrefix(text, "declare ")
+	text = strings.TrimPrefix(text, "abstract ")
+	text = strings.TrimPrefix(text, "const ") // for const enum
+
+	// Get the keyword and extract name
+	var keyword string
+	switch kind {
+	case "class":
+		keyword = "class "
+	case "interface":
+		keyword = "interface "
+	case "namespace":
+		if strings.HasPrefix(text, "namespace ") {
+			keyword = "namespace "
+		} else if strings.HasPrefix(text, "module ") {
+			keyword = "module "
+		}
+	case "enum":
+		keyword = "enum "
+	}
+
+	if keyword == "" || !strings.HasPrefix(text, keyword) {
+		return ""
+	}
+
+	text = strings.TrimPrefix(text, keyword)
+
+	// Extract name (up to space, <, {, newline, or extends/implements)
+	for i, c := range text {
+		if c == ' ' || c == '<' || c == '{' || c == '\n' {
+			name := strings.TrimSpace(text[:i])
+			if isValidIdentifier(name) {
+				return name
+			}
+			break
+		}
+	}
+
+	// No delimiter found, return whole thing if valid
+	for i, c := range text {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			name := text[:i]
+			if isValidIdentifier(name) {
+				return name
+			}
+			return ""
+		}
+	}
+	if isValidIdentifier(text) {
+		return text
+	}
+	return ""
+}
+
+// findEndLine finds the line number where a brace-delimited block ends
+// startLine is 0-indexed, returns 0-indexed line number
+func findEndLine(content []byte, startLine int) int {
+	lines := bytes.Split(content, []byte("\n"))
+	braceCount := 0
+	started := false
+
+	for i := startLine; i < len(lines); i++ {
+		line := lines[i]
+		for _, ch := range line {
+			if ch == '{' {
+				braceCount++
+				started = true
+			} else if ch == '}' {
+				braceCount--
+				if started && braceCount == 0 {
+					return i // Return 0-indexed line number
+				}
+			}
+		}
+	}
+	return len(lines) - 1 // Fallback to last line (0-indexed)
+}
+
+// findContainingScope finds the innermost scope container that contains the given line
+// Symbols on the container's start line (class/interface declaration) get "global" scope
+func findContainingScope(symbolLine int, containers []ScopeContainer) string {
+	var best *ScopeContainer
+	for i := range containers {
+		c := &containers[i]
+		// Symbol must be strictly inside the container (not on start line)
+		// This ensures class/interface declarations themselves get "global" scope
+		if symbolLine > c.StartLine && symbolLine <= c.EndLine {
+			if best == nil || c.StartLine > best.StartLine {
+				best = c // Prefer innermost (most recent start line)
+			}
+		}
+	}
+	if best != nil {
+		return best.Kind + ":" + best.Name
+	}
+	return "global"
 }
 
 // Legacy exports for compatibility

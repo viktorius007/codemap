@@ -1,0 +1,27 @@
+# TypeScript scope container rules - extracts classes, interfaces, enums, and namespaces
+# Used for two-pass scope resolution: first extract containers with ranges,
+# then assign symbols to scopes by line containment
+
+id: ts-container-class
+language: typescript
+rule:
+  any:
+    - kind: class_declaration
+    - kind: abstract_class_declaration
+---
+id: ts-container-interface
+language: typescript
+rule:
+  kind: interface_declaration
+---
+id: ts-container-namespace
+language: typescript
+rule:
+  any:
+    - kind: module
+    - kind: internal_module
+---
+id: ts-container-enum
+language: typescript
+rule:
+  kind: enum_declaration

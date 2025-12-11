@@ -1,0 +1,8 @@
+# JavaScript scope container rules - extracts classes
+# Used for two-pass scope resolution: first extract containers with ranges,
+# then assign symbols to scopes by line containment
+
+id: js-container-class
+language: javascript
+rule:
+  kind: class_declaration

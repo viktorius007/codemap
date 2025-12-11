@@ -1464,3 +1464,562 @@ class MyClass {
 		t.Errorf("Expected MyClass class, got: %v", analysis.Structs)
 	}
 }
+
+// Tests for V2 symbol extraction
+
+func TestDetermineRole(t *testing.T) {
+	tests := []struct {
+		ruleID   string
+		expected SymbolRole
+	}{
+		{"ts-functions", RoleDefinition},
+		{"ts-classes", RoleDefinition},
+		{"ts-ref-function-calls", RoleReference},
+		{"ts-ref-new-expressions", RoleReference},
+		{"js-ref-function-calls", RoleReference},
+		{"go-functions", RoleDefinition},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.ruleID, func(t *testing.T) {
+			result := determineRole(tc.ruleID)
+			if result != tc.expected {
+				t.Errorf("determineRole(%q) = %v, want %v", tc.ruleID, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestDetermineKind(t *testing.T) {
+	tests := []struct {
+		ruleID   string
+		expected SymbolKind
+	}{
+		{"ts-functions", KindFunction},
+		{"ts-arrow-functions", KindFunction},
+		{"ts-classes", KindClass},
+		{"ts-interfaces", KindInterface},
+		{"ts-methods", KindMethod},
+		{"ts-constants", KindConstant},
+		{"ts-vars", KindVariable},
+		{"ts-field-definitions", KindField},
+		{"ts-property-signatures", KindProperty},
+		{"ts-decorators", KindDecorator},
+		{"ts-imports", KindImport},
+		{"ts-namespaces", KindNamespace},
+		{"ts-enums", KindEnum},
+		{"ts-ref-function-calls", KindFunction},
+		{"ts-ref-new-expressions", KindClass},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.ruleID, func(t *testing.T) {
+			result := determineKind(tc.ruleID)
+			if result != tc.expected {
+				t.Errorf("determineKind(%q) = %v, want %v", tc.ruleID, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestExtractScopeFromContext(t *testing.T) {
+	tests := []struct {
+		name     string
+		lines    string
+		lang     string
+		expected string
+	}{
+		{
+			name:     "global scope - no context",
+			lines:    "function foo() {}",
+			lang:     "typescript",
+			expected: "global",
+		},
+		{
+			name:     "class scope",
+			lines:    "class MyClass {\n  method() {}\n}",
+			lang:     "typescript",
+			expected: "class:MyClass",
+		},
+		{
+			name:     "interface scope",
+			lines:    "interface IFoo {\n  bar(): void;\n}",
+			lang:     "typescript",
+			expected: "interface:IFoo",
+		},
+		{
+			name:     "go language - always global",
+			lines:    "class MyClass {}",
+			lang:     "go",
+			expected: "global",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractScopeFromContext(tc.lines, tc.lang)
+			if result != tc.expected {
+				t.Errorf("extractScopeFromContext(%q, %q) = %q, want %q", tc.lines, tc.lang, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestExtractModifiers(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		lang     string
+		expected []string
+	}{
+		{
+			name:     "public method",
+			text:     "public method() {}",
+			lang:     "typescript",
+			expected: []string{"public"},
+		},
+		{
+			name:     "private static",
+			text:     "private static field = 1",
+			lang:     "typescript",
+			expected: []string{"private", "static"},
+		},
+		{
+			name:     "async function",
+			text:     "async function foo() {}",
+			lang:     "typescript",
+			expected: []string{"async"},
+		},
+		{
+			name:     "export default",
+			text:     "export default class Foo {}",
+			lang:     "typescript",
+			expected: []string{"export", "default"},
+		},
+		{
+			name:     "go language - no modifiers",
+			text:     "public func foo() {}",
+			lang:     "go",
+			expected: []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractModifiers(tc.text, tc.lang)
+			if len(result) != len(tc.expected) {
+				t.Errorf("extractModifiers(%q, %q) = %v, want %v", tc.text, tc.lang, result, tc.expected)
+				return
+			}
+			for i, mod := range tc.expected {
+				found := false
+				for _, r := range result {
+					if r == mod {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("extractModifiers(%q, %q) missing %q at index %d", tc.text, tc.lang, mod, i)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractCallExpressionName(t *testing.T) {
+	tests := []struct {
+		text     string
+		expected string
+	}{
+		{"foo()", "foo"},
+		{"obj.method()", "method"},
+		{"obj?.optionalMethod()", "optionalMethod"},
+		{"console.log('hello')", "log"},
+		{"()", ""},
+		{"123", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.text, func(t *testing.T) {
+			result := extractCallExpressionName(tc.text)
+			if result != tc.expected {
+				t.Errorf("extractCallExpressionName(%q) = %q, want %q", tc.text, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestExtractNewExpressionName(t *testing.T) {
+	tests := []struct {
+		text     string
+		expected string
+	}{
+		{"new Foo()", "Foo"},
+		{"new MyClass(arg1, arg2)", "MyClass"},
+		{"new Generic<T>()", "Generic"},
+		{"foo()", ""},
+		{"new ()", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.text, func(t *testing.T) {
+			result := extractNewExpressionName(tc.text)
+			if result != tc.expected {
+				t.Errorf("extractNewExpressionName(%q) = %q, want %q", tc.text, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestExtractTypeReferenceName(t *testing.T) {
+	tests := []struct {
+		text     string
+		expected string
+	}{
+		{"string", "string"},
+		{"MyClass", "MyClass"},
+		{"Array<T>", "Array"},
+		{"Namespace.Type", "Type"},
+		{"Foo.Bar.Baz", "Baz"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.text, func(t *testing.T) {
+			result := extractTypeReferenceName(tc.text)
+			if result != tc.expected {
+				t.Errorf("extractTypeReferenceName(%q) = %q, want %q", tc.text, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestScanDirectoryV2Integration(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatalf("Failed to create scanner: %v", err)
+	}
+	defer scanner.Close()
+
+	if !scanner.Available() {
+		t.Skip("ast-grep (sg) not installed")
+	}
+
+	// Create test TypeScript file
+	tmpDir := t.TempDir()
+	tsFile := filepath.Join(tmpDir, "test.ts")
+	os.WriteFile(tsFile, []byte(`
+import { foo } from './bar';
+
+class MyClass {
+    private field: string;
+
+    constructor() {
+        this.field = "test";
+    }
+
+    public method(): void {
+        foo();
+        const local = new MyClass();
+    }
+}
+
+function standalone() {
+    const x = 1;
+}
+
+interface IFoo {
+    bar: string;
+    baz(): void;
+}
+
+type MyType = string | number;
+
+enum Color { Red, Green, Blue }
+`), 0644)
+
+	// Test without refs
+	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	if err != nil {
+		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("Expected results, got none")
+	}
+
+	analysis := results[0]
+
+	// Check that we have symbols
+	if len(analysis.Symbols) == 0 {
+		t.Fatal("Expected symbols, got none")
+	}
+
+	// Check for expected symbol kinds
+	kindCounts := make(map[SymbolKind]int)
+	for _, sym := range analysis.Symbols {
+		kindCounts[sym.Kind]++
+	}
+
+	if kindCounts[KindClass] < 1 {
+		t.Errorf("Expected at least 1 class, got %d", kindCounts[KindClass])
+	}
+	if kindCounts[KindFunction] < 1 {
+		t.Errorf("Expected at least 1 function, got %d", kindCounts[KindFunction])
+	}
+	if kindCounts[KindInterface] < 1 {
+		t.Errorf("Expected at least 1 interface, got %d", kindCounts[KindInterface])
+	}
+
+	// Check all symbols have line numbers > 0
+	for _, sym := range analysis.Symbols {
+		if sym.Line <= 0 {
+			t.Errorf("Symbol %q has invalid line number: %d", sym.Name, sym.Line)
+		}
+	}
+
+	// Check all symbols have role set
+	for _, sym := range analysis.Symbols {
+		if sym.Role != RoleDefinition && sym.Role != RoleReference {
+			t.Errorf("Symbol %q has invalid role: %v", sym.Name, sym.Role)
+		}
+	}
+
+	// Test with refs enabled
+	resultsWithRefs, err := scanner.ScanDirectoryV2(tmpDir, true)
+	if err != nil {
+		t.Fatalf("ScanDirectoryV2 with refs failed: %v", err)
+	}
+
+	// Should have more symbols when refs are included
+	if len(resultsWithRefs) == 0 {
+		t.Fatal("Expected results with refs, got none")
+	}
+}
+
+func TestFindEndLine(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		startLine int // 0-indexed
+		expected  int // 0-indexed
+	}{
+		{
+			name: "simple class",
+			content: `class Foo {
+    method() {}
+}`,
+			startLine: 0,
+			expected:  2,
+		},
+		{
+			name: "nested braces",
+			content: `class Bar {
+    method() {
+        if (true) {
+            console.log("hi");
+        }
+    }
+}`,
+			startLine: 0,
+			expected:  6,
+		},
+		{
+			name: "interface",
+			content: `interface IFoo {
+    prop: string;
+    method(): void;
+}`,
+			startLine: 0,
+			expected:  3,
+		},
+		{
+			name: "multiple classes",
+			content: `class First {
+    a() {}
+}
+
+class Second {
+    b() {}
+}`,
+			startLine: 4, // Second class starts at line 4 (0-indexed)
+			expected:  6,
+		},
+		{
+			name: "single line class",
+			content: `declare class Empty {}
+declare class Another {}`,
+			startLine: 0,
+			expected:  0, // Opening and closing brace on same line
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := findEndLine([]byte(tt.content), tt.startLine)
+			if result != tt.expected {
+				t.Errorf("findEndLine() = %d, want %d", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFindContainingScope(t *testing.T) {
+	// Using 0-indexed line numbers to match ast-grep output
+	containers := []ScopeContainer{
+		{Name: "MyClass", Kind: "class", StartLine: 0, EndLine: 9},
+		{Name: "IFoo", Kind: "interface", StartLine: 11, EndLine: 19},
+		{Name: "Inner", Kind: "class", StartLine: 2, EndLine: 7}, // Nested inside MyClass
+	}
+
+	tests := []struct {
+		name       string
+		symbolLine int // 0-indexed
+		expected   string
+	}{
+		{"global symbol", 24, "global"},
+		{"inside class", 1, "class:MyClass"},
+		{"inside interface", 14, "interface:IFoo"},
+		{"inside nested class", 4, "class:Inner"}, // Should pick Inner, not MyClass
+		{"at class start line", 0, "global"},      // Container declarations are global
+		{"at class end", 9, "class:MyClass"},
+		{"between containers", 10, "global"},
+		{"at interface start line", 11, "global"}, // Interface declaration is global
+		{"at nested class start", 2, "class:MyClass"}, // Nested class decl is inside parent
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := findContainingScope(tt.symbolLine, containers)
+			if result != tt.expected {
+				t.Errorf("findContainingScope(%d) = %q, want %q", tt.symbolLine, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractContainerName(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		kind     string
+		expected string
+	}{
+		{"simple class", "class Foo {", "class", "Foo"},
+		{"export class", "export class Bar {", "class", "Bar"},
+		{"abstract class", "abstract class Baz {", "class", "Baz"},
+		{"export default class", "export default class Qux {", "class", "Qux"},
+		{"class with generics", "class Generic<T> {", "class", "Generic"},
+		{"class extends", "class Child extends Parent {", "class", "Child"},
+		{"simple interface", "interface IFoo {", "interface", "IFoo"},
+		{"export interface", "export interface IBar {", "interface", "IBar"},
+		{"interface with generics", "interface IGeneric<T> {", "interface", "IGeneric"},
+		{"simple enum", "enum Direction {", "enum", "Direction"},
+		{"const enum", "const enum Colors {", "enum", "Colors"},
+		{"export enum", "export enum Status {", "enum", "Status"},
+		{"namespace", "namespace MyNS {", "namespace", "MyNS"},
+		{"module keyword", "module OldNS {", "namespace", "OldNS"},
+		{"declare namespace", "declare namespace DeclNS {", "namespace", "DeclNS"},
+		{"decorated class", "@Component\nclass DecClass {", "class", "DecClass"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractContainerName(tt.text, tt.kind)
+			if result != tt.expected {
+				t.Errorf("extractContainerName(%q, %q) = %q, want %q", tt.text, tt.kind, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestScopeTrackingIntegration(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil || !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+	defer scanner.Close()
+
+	tmpDir := t.TempDir()
+	tsFile := filepath.Join(tmpDir, "scope_test.ts")
+	os.WriteFile(tsFile, []byte(`import { foo } from './bar';
+
+class MyClass {
+    private field: string;
+
+    constructor() {
+        this.field = "test";
+    }
+
+    public method(): void {
+        foo();
+    }
+}
+
+function standalone() {
+    const x = 1;
+}
+
+interface IFoo {
+    bar: string;
+    baz(): void;
+}
+
+enum Color { Red, Green, Blue }
+`), 0644)
+
+	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	if err != nil {
+		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("Expected results, got none")
+	}
+
+	// Build a map of symbol scopes
+	symbolScopes := make(map[string]string)
+	for _, file := range results {
+		for _, sym := range file.Symbols {
+			// Use name:kind as key since names might not be unique
+			key := sym.Name + ":" + string(sym.Kind)
+			symbolScopes[key] = sym.Scope
+		}
+	}
+
+	// Check expected scopes
+	expectedScopes := map[string]string{
+		"MyClass:class":      "global",
+		"field:field":        "class:MyClass",
+		"constructor:method": "class:MyClass",
+		"method:method":      "class:MyClass",
+		"standalone:function": "global",
+		"IFoo:interface":     "global",
+		"bar:property":       "interface:IFoo",
+		"baz:method":         "interface:IFoo",
+		"Color:enum":         "global",
+	}
+
+	for key, expected := range expectedScopes {
+		if actual, ok := symbolScopes[key]; ok {
+			if actual != expected {
+				t.Errorf("Symbol %q: scope = %q, want %q", key, actual, expected)
+			}
+		}
+		// Don't fail if symbol not found - other tests cover extraction
+	}
+
+	// At minimum, verify some symbols are NOT global
+	nonGlobalCount := 0
+	for _, file := range results {
+		for _, sym := range file.Symbols {
+			if sym.Scope != "global" && sym.Scope != "" {
+				nonGlobalCount++
+			}
+		}
+	}
+
+	if nonGlobalCount == 0 {
+		t.Error("Expected some symbols to have non-global scope, but all are global")
+	}
+}

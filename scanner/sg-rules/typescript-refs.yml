@@ -1,0 +1,22 @@
+id: ts-ref-function-calls
+language: typescript
+rule:
+  kind: call_expression
+---
+id: ts-ref-new-expressions
+language: typescript
+rule:
+  kind: new_expression
+---
+id: ts-ref-type-references
+language: typescript
+rule:
+  kind: type_identifier
+  not:
+    inside:
+      any:
+        - kind: class_declaration
+        - kind: abstract_class_declaration
+        - kind: interface_declaration
+        - kind: type_alias_declaration
+        - kind: enum_declaration

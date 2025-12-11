@@ -126,3 +126,72 @@ func dedupe(items []string) []string {
 	}
 	return result
 }
+
+// SymbolKind represents the category of a symbol
+type SymbolKind string
+
+const (
+	KindFunction  SymbolKind = "function"
+	KindMethod    SymbolKind = "method"
+	KindClass     SymbolKind = "class"
+	KindInterface SymbolKind = "interface"
+	KindType      SymbolKind = "type"
+	KindVariable  SymbolKind = "variable"
+	KindConstant  SymbolKind = "constant"
+	KindField     SymbolKind = "field"
+	KindProperty  SymbolKind = "property"
+	KindDecorator SymbolKind = "decorator"
+	KindImport    SymbolKind = "import"
+	KindNamespace SymbolKind = "namespace"
+	KindEnum      SymbolKind = "enum"
+)
+
+// SymbolRole distinguishes definitions from references
+type SymbolRole string
+
+const (
+	RoleDefinition SymbolRole = "definition"
+	RoleReference  SymbolRole = "reference"
+)
+
+// Symbol represents a code symbol with full metadata
+type Symbol struct {
+	Name      string     `json:"name"`
+	Kind      SymbolKind `json:"kind"`
+	Role      SymbolRole `json:"role"`
+	Line      int        `json:"line"`
+	Column    int        `json:"column"`
+	Parent    string     `json:"parent,omitempty"`    // e.g., class name for methods
+	Scope     string     `json:"scope,omitempty"`     // e.g., "global", "class:MyClass"
+	Modifiers []string   `json:"modifiers,omitempty"` // e.g., ["async", "static", "public"]
+	Signature string     `json:"signature,omitempty"` // e.g., "(x: number): string"
+}
+
+// FileAnalysisV2 extends FileAnalysis with rich symbol metadata
+type FileAnalysisV2 struct {
+	Path     string   `json:"path"`
+	Language string   `json:"language"`
+	Symbols  []Symbol `json:"symbols"`
+}
+
+// ScopeContainer represents a code block that creates a scope (class, interface, etc.)
+type ScopeContainer struct {
+	Name      string // e.g., "MyClass", "IFoo"
+	Kind      string // "class", "interface", "namespace", "enum"
+	StartLine int    // 1-indexed line where container begins
+	EndLine   int    // 1-indexed line where container ends (closing brace)
+}
+
+// dedupeSymbols removes duplicate symbols based on name+kind+line
+func dedupeSymbols(symbols []Symbol) []Symbol {
+	seen := make(map[string]bool)
+	result := make([]Symbol, 0, len(symbols))
+	for _, sym := range symbols {
+		key := sym.Name + string(sym.Kind) + string(sym.Role) + string(rune(sym.Line))
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, sym)
+		}
+	}
+	return result
+}

@@ -64,6 +64,9 @@ func main() {
 	watchMode := flag.Bool("watch", false, "Live file watcher daemon (experimental)")
 	importersMode := flag.String("importers", "", "Check file impact: who imports it, is it a hub?")
 	symbolsMode := flag.Bool("symbols", false, "Show code symbols (functions, types, structs, etc.)")
+	symbolsV2Mode := flag.Bool("symbols-v2", false, "Rich symbol extraction with metadata (line numbers, scopes, roles)")
+	showRefsMode := flag.Bool("refs", false, "Include symbol references (use with --symbols-v2)")
+	symbolsJSONMode := flag.Bool("symbols-json", false, "Output symbols as JSON (use with --symbols or --symbols-v2)")
 	helpMode := flag.Bool("help", false, "Show help")
 	// Short flag aliases
 	flag.IntVar(depthLimit, "d", 0, "Limit tree depth (shorthand)")
@@ -86,6 +89,9 @@ func main() {
 		fmt.Println("  --exclude <patterns> Exclude paths matching patterns (e.g., '.xcassets,Fonts')")
 		fmt.Println("  --importers <file>  Check file impact (who imports it, hub status)")
 		fmt.Println("  --symbols           Show code symbols (functions, types, structs, etc.)")
+		fmt.Println("  --symbols-v2        Rich symbols with metadata (line numbers, scopes, roles)")
+		fmt.Println("  --refs              Include symbol references (use with --symbols-v2)")
+		fmt.Println("  --symbols-json      Output symbols as JSON")
 		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Println("  codemap .                       # Basic tree view")
@@ -158,9 +164,15 @@ func main() {
 		return
 	}
 
+	// Symbols V2 mode - rich symbol extraction with metadata
+	if *symbolsV2Mode {
+		runSymbolsV2Mode(absRoot, root, *showRefsMode, *symbolsJSONMode)
+		return
+	}
+
 	// Symbols mode - show code symbols
 	if *symbolsMode {
-		runSymbolsMode(absRoot, root)
+		runSymbolsMode(absRoot, root, *symbolsJSONMode)
 		return
 	}
 
@@ -449,7 +461,7 @@ func runDaemon(root string) {
 	watch.RemovePID(root)
 }
 
-func runSymbolsMode(absRoot, root string) {
+func runSymbolsMode(absRoot, root string, jsonOutput bool) {
 	sg, err := scanner.NewAstGrepScanner()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing scanner: %v\n", err)
@@ -470,5 +482,37 @@ func runSymbolsMode(absRoot, root string) {
 		os.Exit(1)
 	}
 
-	render.Symbols(analyses)
+	if jsonOutput {
+		json.NewEncoder(os.Stdout).Encode(analyses)
+	} else {
+		render.Symbols(analyses)
+	}
+}
+
+func runSymbolsV2Mode(absRoot, root string, showRefs bool, jsonOutput bool) {
+	sg, err := scanner.NewAstGrepScanner()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing scanner: %v\n", err)
+		os.Exit(1)
+	}
+	defer sg.Close()
+
+	if !sg.Available() {
+		fmt.Fprintln(os.Stderr, "ast-grep (sg) not found. Install via:")
+		fmt.Fprintln(os.Stderr, "  brew install ast-grep    # macOS/Linux")
+		fmt.Fprintln(os.Stderr, "  cargo install ast-grep   # via Rust")
+		os.Exit(1)
+	}
+
+	analyses, err := sg.ScanDirectoryV2(absRoot, showRefs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error scanning: %v\n", err)
+		os.Exit(1)
+	}
+
+	options := render.RenderOptions{
+		ShowReferences: showRefs,
+		JSONOutput:     jsonOutput,
+	}
+	render.SymbolsV2(analyses, options)
 }

@@ -1,0 +1,9 @@
+id: js-ref-function-calls
+language: javascript
+rule:
+  kind: call_expression
+---
+id: js-ref-new-expressions
+language: javascript
+rule:
+  kind: new_expression
