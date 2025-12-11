@@ -40,6 +40,9 @@ type FileAnalysis struct {
 	Constants  []string `json:"constants,omitempty"`  // const declarations
 	Methods    []string `json:"methods,omitempty"`    // methods with receivers (Go)
 	Vars       []string `json:"vars,omitempty"`       // package-level variables (Go)
+	Fields     []string `json:"fields,omitempty"`     // class/struct fields (TS/JS)
+	Properties []string `json:"properties,omitempty"` // interface properties (TS)
+	Decorators []string `json:"decorators,omitempty"` // decorators (TS)
 }
 
 // DepsProject is the JSON output for --deps mode.

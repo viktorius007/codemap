@@ -3,12 +3,131 @@ language: typescript
 rule:
   any:
     - pattern: import $$$_ from "$PATH"
+    - pattern: import $$$_ from '$PATH'
     - pattern: import "$PATH"
+    - pattern: import '$PATH'
     - pattern: require("$PATH")
+    - pattern: require('$PATH')
 ---
 id: ts-functions
 language: typescript
 rule:
+  kind: function_declaration
+---
+id: ts-methods
+language: typescript
+rule:
+  kind: method_definition
+---
+id: ts-classes
+language: typescript
+rule:
   any:
-    - kind: function_declaration
-    - kind: method_definition
+    - kind: class_declaration
+    - kind: abstract_class_declaration
+---
+id: ts-interfaces
+language: typescript
+rule:
+  kind: interface_declaration
+---
+id: ts-types
+language: typescript
+rule:
+  kind: type_alias_declaration
+---
+id: ts-enums
+language: typescript
+rule:
+  kind: enum_declaration
+---
+id: ts-lexical
+language: typescript
+rule:
+  kind: lexical_declaration
+---
+id: ts-arrow-functions
+language: typescript
+rule:
+  kind: arrow_function
+---
+id: ts-namespaces
+language: typescript
+rule:
+  any:
+    - kind: internal_module
+    - kind: module
+---
+id: ts-function-signatures
+language: typescript
+rule:
+  kind: function_signature
+---
+id: ts-method-signatures
+language: typescript
+rule:
+  any:
+    - kind: method_signature
+    - kind: abstract_method_signature
+---
+id: ts-property-signatures
+language: typescript
+rule:
+  kind: property_signature
+---
+id: ts-field-definitions
+language: typescript
+rule:
+  kind: public_field_definition
+---
+id: ts-decorators
+language: typescript
+rule:
+  kind: decorator
+---
+id: ts-generator-functions
+language: typescript
+rule:
+  kind: generator_function_declaration
+---
+id: ts-import-aliases
+language: typescript
+rule:
+  any:
+    - kind: import_alias
+    - kind: import_require_clause
+---
+id: ts-ambient-declarations
+language: typescript
+rule:
+  kind: ambient_declaration
+---
+id: ts-call-signatures
+language: typescript
+rule:
+  kind: call_signature
+---
+id: ts-construct-signatures
+language: typescript
+rule:
+  kind: construct_signature
+---
+id: ts-index-signatures
+language: typescript
+rule:
+  kind: index_signature
+---
+id: ts-variable-declarations
+language: typescript
+rule:
+  kind: variable_declaration
+---
+id: ts-function-expressions
+language: typescript
+rule:
+  kind: function_expression
+---
+id: ts-static-blocks
+language: typescript
+rule:
+  kind: class_static_block

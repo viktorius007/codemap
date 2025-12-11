@@ -19,12 +19,17 @@ func Symbols(analyses []scanner.FileAnalysis) {
 		if len(a.Functions) == 0 && len(a.Structs) == 0 &&
 			len(a.Interfaces) == 0 && len(a.Methods) == 0 &&
 			len(a.Types) == 0 && len(a.Constants) == 0 &&
-			len(a.Vars) == 0 {
+			len(a.Vars) == 0 && len(a.Fields) == 0 &&
+			len(a.Properties) == 0 && len(a.Decorators) == 0 &&
+			len(a.Imports) == 0 {
 			continue
 		}
 
 		fmt.Printf("\n%s%s%s\n", Cyan, a.Path, Reset)
 
+		if len(a.Imports) > 0 {
+			fmt.Printf("  %sImports:%s %s\n", Dim, Reset, strings.Join(a.Imports, ", "))
+		}
 		if len(a.Functions) > 0 {
 			fmt.Printf("  %sFunctions:%s %s\n", Dim, Reset, strings.Join(a.Functions, ", "))
 		}
@@ -45,6 +50,15 @@ func Symbols(analyses []scanner.FileAnalysis) {
 		}
 		if len(a.Vars) > 0 {
 			fmt.Printf("  %sVars:%s %s\n", Dim, Reset, strings.Join(a.Vars, ", "))
+		}
+		if len(a.Fields) > 0 {
+			fmt.Printf("  %sFields:%s %s\n", Dim, Reset, strings.Join(a.Fields, ", "))
+		}
+		if len(a.Properties) > 0 {
+			fmt.Printf("  %sProperties:%s %s\n", Dim, Reset, strings.Join(a.Properties, ", "))
+		}
+		if len(a.Decorators) > 0 {
+			fmt.Printf("  %sDecorators:%s %s\n", Dim, Reset, strings.Join(a.Decorators, ", "))
 		}
 	}
 	fmt.Println()

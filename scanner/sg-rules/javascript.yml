@@ -3,12 +3,63 @@ language: javascript
 rule:
   any:
     - pattern: import $$$_ from "$PATH"
+    - pattern: import $$$_ from '$PATH'
     - pattern: import "$PATH"
+    - pattern: import '$PATH'
     - pattern: require("$PATH")
+    - pattern: require('$PATH')
 ---
 id: js-functions
 language: javascript
 rule:
-  any:
-    - kind: function_declaration
-    - kind: method_definition
+  kind: function_declaration
+---
+id: js-methods
+language: javascript
+rule:
+  kind: method_definition
+---
+id: js-classes
+language: javascript
+rule:
+  kind: class_declaration
+---
+id: js-lexical
+language: javascript
+rule:
+  kind: lexical_declaration
+---
+id: js-arrow-functions
+language: javascript
+rule:
+  kind: arrow_function
+---
+id: js-generator-functions
+language: javascript
+rule:
+  kind: generator_function_declaration
+---
+id: js-decorators
+language: javascript
+rule:
+  kind: decorator
+---
+id: js-field-definitions
+language: javascript
+rule:
+  kind: field_definition
+---
+id: js-variable-declarations
+language: javascript
+rule:
+  kind: variable_declaration
+---
+id: js-function-expressions
+language: javascript
+rule:
+  kind: function_expression
+---
+id: js-static-blocks
+language: javascript
+rule:
+  kind: class_static_block
