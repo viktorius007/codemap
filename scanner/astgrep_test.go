@@ -2215,3 +2215,89 @@ func TestIsValidIdentifierWithPrivate(t *testing.T) {
 		})
 	}
 }
+
+func TestGoScopeTracking(t *testing.T) {
+	scanner, err := NewAstGrepScanner()
+	if err != nil || !scanner.Available() {
+		t.Skip("ast-grep not available")
+	}
+	defer scanner.Close()
+
+	tmpDir := t.TempDir()
+	goFile := filepath.Join(tmpDir, "scope_test.go")
+	os.WriteFile(goFile, []byte(`package main
+
+type MyStruct struct {
+    Field1 string
+}
+
+func (m *MyStruct) Method1() {}
+func (m MyStruct) Method2() string { return "" }
+
+type MyInterface interface {
+    DoSomething()
+}
+
+func standalone() {}
+`), 0644)
+
+	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	if err != nil {
+		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("Expected results, got none")
+	}
+
+	// Check for method scopes
+	method1Scope := ""
+	method2Scope := ""
+	standaloneScope := ""
+	for _, file := range results {
+		for _, sym := range file.Symbols {
+			if sym.Name == "Method1" && sym.Kind == KindMethod {
+				method1Scope = sym.Scope
+			}
+			if sym.Name == "Method2" && sym.Kind == KindMethod {
+				method2Scope = sym.Scope
+			}
+			if sym.Name == "standalone" && sym.Kind == KindFunction {
+				standaloneScope = sym.Scope
+			}
+		}
+	}
+
+	if method1Scope != "struct:MyStruct" {
+		t.Errorf("Method1 scope = %q, want %q", method1Scope, "struct:MyStruct")
+	}
+	if method2Scope != "struct:MyStruct" {
+		t.Errorf("Method2 scope = %q, want %q", method2Scope, "struct:MyStruct")
+	}
+	if standaloneScope != "global" {
+		t.Errorf("standalone scope = %q, want %q", standaloneScope, "global")
+	}
+}
+
+func TestExtractGoReceiverType(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"func (m *MyStruct) Method()", "MyStruct"},
+		{"func (m MyStruct) Method()", "MyStruct"},
+		{"func (s *Server) Handle()", "Server"},
+		{"func standalone()", ""},
+		{"func helper(x int)", ""},
+		{"func (r *Response) Write(data []byte)", "Response"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := extractGoReceiverType(tt.input)
+			if result != tt.expected {
+				t.Errorf("extractGoReceiverType(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

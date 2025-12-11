@@ -391,9 +391,15 @@ func (s *AstGrepScanner) ScanDirectoryV2(root string, includeRefs bool) ([]FileA
 		// Extract symbol with full metadata
 		sym := extractSymbolV2(m, fileMap[relPath].Language)
 		if sym.Name != "" {
-			// Resolve scope using container ranges
+			// Resolve scope using container ranges (for TS/JS)
 			if fileContainers, ok := containers[relPath]; ok && len(fileContainers) > 0 {
 				sym.Scope = findContainingScope(sym.Line, fileContainers)
+			}
+			// For Go methods, extract receiver type as scope
+			if fileMap[relPath].Language == "go" && strings.HasSuffix(m.RuleID, "-methods") {
+				if receiver := extractGoReceiverType(m.Text); receiver != "" {
+					sym.Scope = "struct:" + receiver
+				}
 			}
 			fileMap[relPath].Symbols = append(fileMap[relPath].Symbols, sym)
 		}
@@ -692,6 +698,37 @@ func extractTypeReferenceName(text string) string {
 	}
 	if isValidIdentifier(text) {
 		return text
+	}
+	return ""
+}
+
+// extractGoReceiverType extracts the receiver type from a Go method declaration
+// e.g., "func (m *MyStruct) Method()" -> "MyStruct"
+func extractGoReceiverType(text string) string {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "func ") {
+		return ""
+	}
+	text = strings.TrimPrefix(text, "func ")
+	// Find receiver: (receiver Type)
+	if !strings.HasPrefix(text, "(") {
+		return "" // Not a method, just a function
+	}
+	closeIdx := strings.Index(text, ")")
+	if closeIdx < 0 {
+		return ""
+	}
+	receiver := text[1:closeIdx]
+	// receiver is like "m *MyStruct" or "m MyStruct"
+	parts := strings.Fields(receiver)
+	if len(parts) < 2 {
+		return ""
+	}
+	typeName := parts[len(parts)-1]
+	// Remove pointer prefix
+	typeName = strings.TrimPrefix(typeName, "*")
+	if isValidIdentifier(typeName) {
+		return typeName
 	}
 	return ""
 }
@@ -1952,6 +1989,8 @@ func parseContainerMatch(m ScanMatch, cache *fileCache) ScopeContainer {
 		container.Kind = "namespace"
 	case strings.Contains(m.RuleID, "-container-enum"):
 		container.Kind = "enum"
+	case strings.Contains(m.RuleID, "-container-struct"):
+		container.Kind = "struct"
 	default:
 		return container
 	}
@@ -1994,7 +2033,24 @@ func extractContainerName(text string, kind string) string {
 	text = strings.TrimPrefix(text, "abstract ")
 	text = strings.TrimPrefix(text, "const ") // for const enum
 
-	// Get the keyword and extract name
+	// Handle Go struct/interface: type Name struct { or type Name interface {
+	if kind == "struct" || (kind == "interface" && strings.HasPrefix(text, "type ")) {
+		if strings.HasPrefix(text, "type ") {
+			text = strings.TrimPrefix(text, "type ")
+			for i, c := range text {
+				if c == ' ' || c == '\t' {
+					name := strings.TrimSpace(text[:i])
+					if isValidIdentifier(name) {
+						return name
+					}
+					break
+				}
+			}
+		}
+		return ""
+	}
+
+	// Get the keyword and extract name (TypeScript/JavaScript)
 	var keyword string
 	switch kind {
 	case "class":

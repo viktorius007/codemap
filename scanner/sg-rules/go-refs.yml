@@ -1,0 +1,11 @@
+# Go reference tracking rules
+
+id: go-ref-function-calls
+language: go
+rule:
+  kind: call_expression
+---
+id: go-ref-type-references
+language: go
+rule:
+  kind: type_identifier

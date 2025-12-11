@@ -1,0 +1,20 @@
+# Go scope container rules - extracts structs and interfaces
+# Used for two-pass scope resolution
+
+id: go-container-struct
+language: go
+rule:
+  kind: type_declaration
+  has:
+    kind: type_spec
+    has:
+      kind: struct_type
+---
+id: go-container-interface
+language: go
+rule:
+  kind: type_declaration
+  has:
+    kind: type_spec
+    has:
+      kind: interface_type
