@@ -51,7 +51,17 @@ rule:
           - kind: struct_type
           - kind: interface_type
 ---
+id: go-type-aliases
+language: go
+rule:
+  kind: type_alias
+---
 id: go-vars
 language: go
 rule:
   kind: var_declaration
+---
+id: go-fields
+language: go
+rule:
+  kind: field_declaration

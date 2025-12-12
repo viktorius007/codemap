@@ -280,6 +280,7 @@ type MyInterface interface {
 }
 
 type ID int
+type AliasType = string
 
 func main() {
 	fmt.Println("hello")
@@ -350,6 +351,9 @@ func (m *MyStruct) Do() {
 	}
 	if !types["ID"] {
 		t.Errorf("Expected ID type alias, got: %v", analysis.Types)
+	}
+	if !types["AliasType"] {
+		t.Errorf("Expected AliasType explicit type alias (type X = Y), got: %v", analysis.Types)
 	}
 
 	// Check vars
@@ -660,8 +664,14 @@ let counter = 0;
 	if !types["ID"] {
 		t.Errorf("Expected ID type, got: %v", analysis.Types)
 	}
-	if !types["Status"] {
-		t.Errorf("Expected Status enum in Types, got: %v", analysis.Types)
+
+	// Check enums (now in Enums field, not Types)
+	enums := make(map[string]bool)
+	for _, e := range analysis.Enums {
+		enums[e] = true
+	}
+	if !enums["Status"] {
+		t.Errorf("Expected Status enum in Enums, got: %v", analysis.Enums)
 	}
 
 	// Check classes (stored in Structs)
@@ -1213,7 +1223,7 @@ declare interface IConfig {
 		t.Errorf("Expected Logger class, got: %v", analysis.Structs)
 	}
 
-	// Check types (includes enums, namespaces, type aliases)
+	// Check types (includes namespaces, type aliases)
 	types := make(map[string]bool)
 	for _, ty := range analysis.Types {
 		types[ty] = true
@@ -1221,11 +1231,17 @@ declare interface IConfig {
 	if !types["Utils"] {
 		t.Errorf("Expected Utils namespace, got: %v", analysis.Types)
 	}
-	if !types["Color"] {
-		t.Errorf("Expected Color enum, got: %v", analysis.Types)
-	}
 	if !types["ID"] {
 		t.Errorf("Expected ID type alias, got: %v", analysis.Types)
+	}
+
+	// Check enums (now in Enums field, not Types)
+	enums := make(map[string]bool)
+	for _, e := range analysis.Enums {
+		enums[e] = true
+	}
+	if !enums["Color"] {
+		t.Errorf("Expected Color enum in Enums, got: %v", analysis.Enums)
 	}
 
 	// Check interfaces
@@ -1465,7 +1481,7 @@ class MyClass {
 	}
 }
 
-// Tests for V2 symbol extraction
+// Tests for symbol extraction
 
 func TestDetermineRole(t *testing.T) {
 	tests := []struct {
@@ -1694,7 +1710,7 @@ func TestExtractTypeReferenceName(t *testing.T) {
 	}
 }
 
-func TestScanDirectoryV2Integration(t *testing.T) {
+func TestScanSymbolsIntegration(t *testing.T) {
 	scanner, err := NewAstGrepScanner()
 	if err != nil {
 		t.Fatalf("Failed to create scanner: %v", err)
@@ -1739,9 +1755,9 @@ enum Color { Red, Green, Blue }
 `), 0644)
 
 	// Test without refs
-	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	results, err := scanner.ScanSymbols(tmpDir, false)
 	if err != nil {
-		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+		t.Fatalf("ScanSymbols failed: %v", err)
 	}
 
 	if len(results) == 0 {
@@ -1786,9 +1802,9 @@ enum Color { Red, Green, Blue }
 	}
 
 	// Test with refs enabled
-	resultsWithRefs, err := scanner.ScanDirectoryV2(tmpDir, true)
+	resultsWithRefs, err := scanner.ScanSymbols(tmpDir, true)
 	if err != nil {
-		t.Fatalf("ScanDirectoryV2 with refs failed: %v", err)
+		t.Fatalf("ScanSymbols with refs failed: %v", err)
 	}
 
 	// Should have more symbols when refs are included
@@ -1968,9 +1984,9 @@ interface IFoo {
 enum Color { Red, Green, Blue }
 `), 0644)
 
-	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	results, err := scanner.ScanSymbols(tmpDir, false)
 	if err != nil {
-		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+		t.Fatalf("ScanSymbols failed: %v", err)
 	}
 
 	if len(results) == 0 {
@@ -2048,9 +2064,9 @@ class MyClass {
 }
 `), 0644)
 
-	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	results, err := scanner.ScanSymbols(tmpDir, false)
 	if err != nil {
-		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+		t.Fatalf("ScanSymbols failed: %v", err)
 	}
 
 	if len(results) == 0 {
@@ -2102,9 +2118,9 @@ class DecoratedClass {
 }
 `), 0644)
 
-	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	results, err := scanner.ScanSymbols(tmpDir, false)
 	if err != nil {
-		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+		t.Fatalf("ScanSymbols failed: %v", err)
 	}
 
 	if len(results) == 0 {
@@ -2152,9 +2168,9 @@ class WithComputed {
 }
 `), 0644)
 
-	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	results, err := scanner.ScanSymbols(tmpDir, false)
 	if err != nil {
-		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+		t.Fatalf("ScanSymbols failed: %v", err)
 	}
 
 	if len(results) == 0 {
@@ -2241,9 +2257,9 @@ type MyInterface interface {
 func standalone() {}
 `), 0644)
 
-	results, err := scanner.ScanDirectoryV2(tmpDir, false)
+	results, err := scanner.ScanSymbols(tmpDir, false)
 	if err != nil {
-		t.Fatalf("ScanDirectoryV2 failed: %v", err)
+		t.Fatalf("ScanSymbols failed: %v", err)
 	}
 
 	if len(results) == 0 {
@@ -2299,5 +2315,716 @@ func TestExtractGoReceiverType(t *testing.T) {
 				t.Errorf("extractGoReceiverType(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestExtractGoTypeAliasName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"AliasType = string", "AliasType"},
+		{"ID = int", "ID"},
+		{"StringSlice = []string", "StringSlice"},
+		{"MyFunc = func(int) bool", "MyFunc"},
+		{"type ID int", ""},      // Not explicit alias syntax
+		{"InvalidNoEquals", ""},  // Missing =
+		{"", ""},                 // Empty
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := extractGoTypeAliasName(tt.input)
+			if result != tt.expected {
+				t.Errorf("extractGoTypeAliasName(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// Python extraction tests
+
+func TestExtractPythonClassName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"class MyClass:", "MyClass"},
+		{"class MyClass():", "MyClass"},
+		{"class Child(Parent):", "Child"},
+		{"class Multi(A, B, C):", "Multi"},
+		{"@decorator\nclass Decorated:", "Decorated"},
+		{"@dec1\n@dec2\nclass MultiDec:", "MultiDec"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := extractStructName(tt.input, "python")
+			if result != tt.expected {
+				t.Errorf("extractStructName(%q, python) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractPythonDecorator(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"@staticmethod", "staticmethod"},
+		{"@classmethod", "classmethod"},
+		{"@property", "property"},
+		{"@decorator(args)", "decorator"},
+		{"@module.subdecorator", "subdecorator"},
+		{"@dataclass(frozen=True)", "dataclass"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := extractDecoratorName(tt.input, "python")
+			if result != tt.expected {
+				t.Errorf("extractDecoratorName(%q, python) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractPythonAssignment(t *testing.T) {
+	tests := []struct {
+		input      string
+		name       string
+		isConstant bool
+	}{
+		{"name = 'value'", "name", false},
+		{"counter = 0", "counter", false},
+		{"MAX_SIZE = 100", "MAX_SIZE", true},
+		{"API_KEY = 'secret'", "API_KEY", true},
+		{"name: str = 'value'", "name", false},
+		{"CONFIG: Dict = {}", "CONFIG", true},
+		{"_private = 1", "_private", false},
+		{"__dunder = 2", "__dunder", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			name, isConst := extractPythonAssignment(tt.input)
+			if name != tt.name {
+				t.Errorf("extractPythonAssignment(%q) name = %q, want %q", tt.input, name, tt.name)
+			}
+			if isConst != tt.isConstant {
+				t.Errorf("extractPythonAssignment(%q) isConstant = %v, want %v", tt.input, isConst, tt.isConstant)
+			}
+		})
+	}
+}
+
+func TestExtractLambdaName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"double = lambda x: x * 2", "double"},
+		{"add = lambda a, b: a + b", "add"},
+		{"noop = lambda: None", "noop"},
+		{"lambda x: x", ""}, // Anonymous lambda
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := extractLambdaName(tt.input, "python")
+			if result != tt.expected {
+				t.Errorf("extractLambdaName(%q, python) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAstGrepPythonComprehensive(t *testing.T) {
+	analyzer := NewAstGrepAnalyzer()
+	if !analyzer.Available() {
+		t.Skip("ast-grep (sg) not installed")
+	}
+	defer analyzer.Close()
+
+	tmpDir := t.TempDir()
+	pyFile := filepath.Join(tmpDir, "comprehensive.py")
+	os.WriteFile(pyFile, []byte(`import os
+from pathlib import Path
+from typing import Dict, List
+
+# Module-level constants
+MAX_SIZE = 1000
+API_VERSION = "v1"
+
+# Module-level variables
+counter = 0
+config = {}
+
+# Lambda
+double = lambda x: x * 2
+
+def standalone_function(x):
+    """A standalone function."""
+    return x * 2
+
+async def async_function():
+    """An async function."""
+    pass
+
+class MyClass:
+    """A sample class."""
+
+    class_var = "shared"
+
+    def __init__(self, name):
+        self.name = name
+
+    def instance_method(self):
+        return self.name
+
+    @staticmethod
+    def static_method():
+        return "static"
+
+    @classmethod
+    def class_method(cls):
+        return cls.class_var
+
+    @property
+    def name_property(self):
+        return self._name
+
+@dataclass
+class DataClass:
+    field: str
+    count: int = 0
+
+class Child(MyClass):
+    def child_method(self):
+        pass
+`), 0644)
+
+	analysis, err := analyzer.AnalyzeFile(pyFile)
+	if err != nil {
+		t.Fatalf("AnalyzeFile failed: %v", err)
+	}
+
+	if analysis == nil {
+		t.Fatal("Expected analysis, got nil")
+	}
+
+	// Check imports
+	imports := make(map[string]bool)
+	for _, i := range analysis.Imports {
+		imports[i] = true
+	}
+	if !imports["os"] {
+		t.Errorf("Expected os import, got: %v", analysis.Imports)
+	}
+	if !imports["pathlib"] {
+		t.Errorf("Expected pathlib import, got: %v", analysis.Imports)
+	}
+
+	// Check functions (including lambdas)
+	funcs := make(map[string]bool)
+	for _, f := range analysis.Functions {
+		funcs[f] = true
+	}
+	if !funcs["standalone_function"] {
+		t.Errorf("Expected standalone_function, got: %v", analysis.Functions)
+	}
+	if !funcs["async_function"] {
+		t.Errorf("Expected async_function, got: %v", analysis.Functions)
+	}
+	if !funcs["double"] {
+		t.Errorf("Expected double (lambda), got: %v", analysis.Functions)
+	}
+
+	// Check classes
+	classes := make(map[string]bool)
+	for _, c := range analysis.Structs {
+		classes[c] = true
+	}
+	if !classes["MyClass"] {
+		t.Errorf("Expected MyClass, got: %v", analysis.Structs)
+	}
+	if !classes["DataClass"] {
+		t.Errorf("Expected DataClass, got: %v", analysis.Structs)
+	}
+	if !classes["Child"] {
+		t.Errorf("Expected Child, got: %v", analysis.Structs)
+	}
+
+	// Check decorators
+	decorators := make(map[string]bool)
+	for _, d := range analysis.Decorators {
+		decorators[d] = true
+	}
+	if !decorators["staticmethod"] {
+		t.Errorf("Expected staticmethod decorator, got: %v", analysis.Decorators)
+	}
+	if !decorators["classmethod"] {
+		t.Errorf("Expected classmethod decorator, got: %v", analysis.Decorators)
+	}
+	if !decorators["property"] {
+		t.Errorf("Expected property decorator, got: %v", analysis.Decorators)
+	}
+	if !decorators["dataclass"] {
+		t.Errorf("Expected dataclass decorator, got: %v", analysis.Decorators)
+	}
+
+	// Check constants (ALL_CAPS)
+	constants := make(map[string]bool)
+	for _, c := range analysis.Constants {
+		constants[c] = true
+	}
+	if !constants["MAX_SIZE"] {
+		t.Errorf("Expected MAX_SIZE constant, got: %v", analysis.Constants)
+	}
+	if !constants["API_VERSION"] {
+		t.Errorf("Expected API_VERSION constant, got: %v", analysis.Constants)
+	}
+
+	// Check variables (non-ALL_CAPS)
+	vars := make(map[string]bool)
+	for _, v := range analysis.Vars {
+		vars[v] = true
+	}
+	if !vars["counter"] {
+		t.Errorf("Expected counter variable, got: %v", analysis.Vars)
+	}
+	if !vars["config"] {
+		t.Errorf("Expected config variable, got: %v", analysis.Vars)
+	}
+	// Lambda should NOT be in Vars (it's in Functions)
+	if vars["double"] {
+		t.Errorf("Lambda 'double' should be in Functions only, not Vars: %v", analysis.Vars)
+	}
+}
+
+func TestAstGrepPythonScopeTracking(t *testing.T) {
+	analyzer, err := NewAstGrepScanner()
+	if err != nil {
+		t.Fatalf("NewAstGrepScanner failed: %v", err)
+	}
+	if !analyzer.Available() {
+		t.Skip("ast-grep (sg) not installed")
+	}
+	defer analyzer.Close()
+
+	tmpDir := t.TempDir()
+	pyFile := filepath.Join(tmpDir, "scope_test.py")
+	os.WriteFile(pyFile, []byte(`def top_level():
+    pass
+
+class MyClass:
+    def method_one(self):
+        pass
+
+    def method_two(self):
+        pass
+
+def another_top_level():
+    pass
+`), 0644)
+
+	results, err := analyzer.ScanSymbols(tmpDir, false)
+	if err != nil {
+		t.Fatalf("ScanSymbols failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("Expected results, got none")
+	}
+
+	// Build maps of symbol names to their scopes, separated by kind
+	funcScopeMap := make(map[string]string)
+	methodScopeMap := make(map[string]string)
+	for _, file := range results {
+		for _, sym := range file.Symbols {
+			if sym.Kind == KindFunction {
+				funcScopeMap[sym.Name] = sym.Scope
+			} else if sym.Kind == KindMethod {
+				methodScopeMap[sym.Name] = sym.Scope
+			}
+		}
+	}
+
+	// Top-level functions should have KindFunction and global scope
+	if scope, ok := funcScopeMap["top_level"]; !ok || scope != "global" {
+		t.Errorf("top_level should be KindFunction with global scope, got: %q", scope)
+	}
+	if scope, ok := funcScopeMap["another_top_level"]; !ok || scope != "global" {
+		t.Errorf("another_top_level should be KindFunction with global scope, got: %q", scope)
+	}
+
+	// Methods inside MyClass should have KindMethod and class:MyClass scope
+	if scope, ok := methodScopeMap["method_one"]; !ok || scope != "class:MyClass" {
+		t.Errorf("method_one should be KindMethod with class:MyClass scope, got: %q", scope)
+	}
+	if scope, ok := methodScopeMap["method_two"]; !ok || scope != "class:MyClass" {
+		t.Errorf("method_two should be KindMethod with class:MyClass scope, got: %q", scope)
+	}
+}
+
+// Python field, enum, and generator tests
+
+func TestExtractPythonFieldName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"self.name = 'test'", "name"},
+		{"self.value = 42", "value"},
+		{"self._private = None", "_private"},
+		{"self.__dunder = 1", "__dunder"},
+		{"name = 'test'", ""}, // not a field
+		{"other.name = 'x'", ""}, // not self
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := extractPythonFieldName(tt.input)
+			if got != tt.expected {
+				t.Errorf("extractPythonFieldName(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractPythonPropertyName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"@property\n    def name(self):\n        return self._name", "name"},
+		{"@name.setter\n    def name(self, value):\n        self._name = value", "name"},
+		{"@name.deleter\n    def name(self):\n        del self._name", "name"},
+		{"@property\ndef computed(self):\n    return 42", "computed"},
+		{"def regular(self):\n    pass", ""}, // no decorator
+	}
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			got := extractPythonPropertyName(tt.input)
+			if got != tt.expected {
+				t.Errorf("extractPythonPropertyName() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestPythonPropertiesAndMethods(t *testing.T) {
+	analyzer := NewAstGrepAnalyzer()
+	if !analyzer.Available() {
+		t.Skip("ast-grep not installed")
+	}
+	defer analyzer.Close()
+
+	tmpDir := t.TempDir()
+	pyFile := filepath.Join(tmpDir, "test.py")
+	os.WriteFile(pyFile, []byte(`class Example:
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = value
+
+    @staticmethod
+    def helper():
+        pass
+
+    @classmethod
+    def create(cls):
+        return cls()
+
+    def regular_method(self):
+        pass
+
+def top_level_func():
+    pass
+`), 0644)
+
+	analysis, err := analyzer.AnalyzeFile(pyFile)
+	if err != nil {
+		t.Fatalf("AnalyzeFile failed: %v", err)
+	}
+
+	// Check Properties: should contain "name"
+	props := make(map[string]bool)
+	for _, p := range analysis.Properties {
+		props[p] = true
+	}
+	if !props["name"] {
+		t.Errorf("Expected 'name' in Properties, got: %v", analysis.Properties)
+	}
+
+	// Check Methods: should contain class methods (excluding properties)
+	methods := make(map[string]bool)
+	for _, m := range analysis.Methods {
+		methods[m] = true
+	}
+	expectedMethods := []string{"helper", "create", "regular_method"}
+	for _, exp := range expectedMethods {
+		if !methods[exp] {
+			t.Errorf("Expected '%s' in Methods, got: %v", exp, analysis.Methods)
+		}
+	}
+	// Property methods should NOT be in Methods
+	if methods["name"] {
+		t.Errorf("'name' should be in Properties, not Methods: %v", analysis.Methods)
+	}
+
+	// Check Functions: should ONLY contain top-level functions
+	funcs := make(map[string]bool)
+	for _, f := range analysis.Functions {
+		funcs[f] = true
+	}
+	if !funcs["top_level_func"] {
+		t.Errorf("Expected 'top_level_func' in Functions, got: %v", analysis.Functions)
+	}
+	// Class methods should NOT be in Functions
+	for _, method := range expectedMethods {
+		if funcs[method] {
+			t.Errorf("'%s' should be in Methods, not Functions: %v", method, analysis.Functions)
+		}
+	}
+	if funcs["name"] {
+		t.Errorf("'name' should be in Properties, not Functions: %v", analysis.Functions)
+	}
+}
+
+func TestPythonFieldsEnumsGenerators(t *testing.T) {
+	analyzer := NewAstGrepAnalyzer()
+	if !analyzer.Available() {
+		t.Skip("ast-grep not installed")
+	}
+	defer analyzer.Close()
+
+	tmpDir := t.TempDir()
+	pyFile := filepath.Join(tmpDir, "test.py")
+	os.WriteFile(pyFile, []byte(`from enum import Enum
+
+class Color(Enum):
+    RED = 1
+    GREEN = 2
+
+class Example:
+    def __init__(self):
+        self.name = "test"
+        self.value = 42
+
+def my_generator():
+    yield 1
+    yield 2
+
+def normal_function():
+    return 1
+`), 0644)
+
+	analysis, err := analyzer.AnalyzeFile(pyFile)
+	if err != nil {
+		t.Fatalf("AnalyzeFile failed: %v", err)
+	}
+
+	// Check fields
+	fields := make(map[string]bool)
+	for _, f := range analysis.Fields {
+		fields[f] = true
+	}
+	if !fields["name"] {
+		t.Errorf("Expected 'name' field, got: %v", analysis.Fields)
+	}
+	if !fields["value"] {
+		t.Errorf("Expected 'value' field, got: %v", analysis.Fields)
+	}
+
+	// Check enums (now in Enums field, not Types)
+	enums := make(map[string]bool)
+	for _, e := range analysis.Enums {
+		enums[e] = true
+	}
+	if !enums["Color"] {
+		t.Errorf("Expected 'Color' enum in Enums, got: %v", analysis.Enums)
+	}
+
+	// Check that enum is NOT in Structs (only regular classes should be)
+	structs := make(map[string]bool)
+	for _, s := range analysis.Structs {
+		structs[s] = true
+	}
+	if structs["Color"] {
+		t.Errorf("Enum 'Color' should be in Types only, not Structs: %v", analysis.Structs)
+	}
+	if !structs["Example"] {
+		t.Errorf("Expected 'Example' class in Structs, got: %v", analysis.Structs)
+	}
+
+	// Check generators and top-level functions (in Functions)
+	funcs := make(map[string]bool)
+	for _, f := range analysis.Functions {
+		funcs[f] = true
+	}
+	if !funcs["my_generator"] {
+		t.Errorf("Expected 'my_generator' in Functions, got: %v", analysis.Functions)
+	}
+	if !funcs["normal_function"] {
+		t.Errorf("Expected 'normal_function' in Functions, got: %v", analysis.Functions)
+	}
+
+	// Check that __init__ is in Methods (class method), not Functions
+	methods := make(map[string]bool)
+	for _, m := range analysis.Methods {
+		methods[m] = true
+	}
+	if !methods["__init__"] {
+		t.Errorf("Expected '__init__' in Methods, got: %v", analysis.Methods)
+	}
+	if funcs["__init__"] {
+		t.Errorf("'__init__' should be in Methods, not Functions: %v", analysis.Functions)
+	}
+}
+
+// Go struct field tests
+
+func TestExtractGoFieldNames(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{"Name string", []string{"Name"}},
+		{"Age  int", []string{"Age"}},
+		{"X, Y int", []string{"X", "Y"}},
+		{"address string", []string{"address"}},
+		{"A, B, C float64", []string{"A", "B", "C"}},
+		{"", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := extractGoFieldNames(tt.input)
+			if len(got) != len(tt.expected) {
+				t.Errorf("extractGoFieldNames(%q) = %v, want %v", tt.input, got, tt.expected)
+				return
+			}
+			for i, name := range got {
+				if name != tt.expected[i] {
+					t.Errorf("extractGoFieldNames(%q)[%d] = %q, want %q", tt.input, i, name, tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestGoStructFields(t *testing.T) {
+	analyzer := NewAstGrepAnalyzer()
+	if !analyzer.Available() {
+		t.Skip("ast-grep not installed")
+	}
+	defer analyzer.Close()
+
+	tmpDir := t.TempDir()
+	goFile := filepath.Join(tmpDir, "test.go")
+	os.WriteFile(goFile, []byte(`package main
+
+type Person struct {
+    Name    string
+    Age     int
+    X, Y    float64
+    address string
+}
+`), 0644)
+
+	analysis, err := analyzer.AnalyzeFile(goFile)
+	if err != nil {
+		t.Fatalf("AnalyzeFile failed: %v", err)
+	}
+
+	fields := make(map[string]bool)
+	for _, f := range analysis.Fields {
+		fields[f] = true
+	}
+
+	expected := []string{"Name", "Age", "X", "Y", "address"}
+	for _, exp := range expected {
+		if !fields[exp] {
+			t.Errorf("Expected field %q, got: %v", exp, analysis.Fields)
+		}
+	}
+}
+
+// JavaScript property tests
+
+func TestExtractPropertyName(t *testing.T) {
+	tests := []struct {
+		input    string
+		lang     string
+		expected string
+	}{
+		{"get name() { return this._name; }", "javascript", "name"},
+		{"set name(v) { this._name = v; }", "javascript", "name"},
+		{"get count() { return this._count; }", "typescript", "count"},
+		{"set value(v) { }", "typescript", "value"},
+		{"regular() { return 1; }", "javascript", ""},
+		{"getName() { }", "javascript", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input[:min(20, len(tt.input))], func(t *testing.T) {
+			got := extractPropertyName(tt.input, tt.lang)
+			if got != tt.expected {
+				t.Errorf("extractPropertyName(%q, %q) = %q, want %q", tt.input, tt.lang, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestJavaScriptProperties(t *testing.T) {
+	analyzer := NewAstGrepAnalyzer()
+	if !analyzer.Available() {
+		t.Skip("ast-grep not installed")
+	}
+	defer analyzer.Close()
+
+	tmpDir := t.TempDir()
+	jsFile := filepath.Join(tmpDir, "test.js")
+	os.WriteFile(jsFile, []byte(`class Example {
+  get name() { return this._name; }
+  set name(v) { this._name = v; }
+  get count() { return this._count; }
+  regular() { return 1; }
+}`), 0644)
+
+	analysis, err := analyzer.AnalyzeFile(jsFile)
+	if err != nil {
+		t.Fatalf("AnalyzeFile failed: %v", err)
+	}
+
+	// Check properties
+	props := make(map[string]bool)
+	for _, p := range analysis.Properties {
+		props[p] = true
+	}
+	if !props["name"] {
+		t.Errorf("Expected 'name' property, got: %v", analysis.Properties)
+	}
+	if !props["count"] {
+		t.Errorf("Expected 'count' property, got: %v", analysis.Properties)
+	}
+
+	// Check methods (should NOT include name or count)
+	methods := make(map[string]bool)
+	for _, m := range analysis.Methods {
+		methods[m] = true
+	}
+	if methods["name"] {
+		t.Errorf("'name' should be a property, not method: %v", analysis.Methods)
+	}
+	if methods["count"] {
+		t.Errorf("'count' should be a property, not method: %v", analysis.Methods)
+	}
+	if !methods["regular"] {
+		t.Errorf("Expected 'regular' method, got: %v", analysis.Methods)
 	}
 }

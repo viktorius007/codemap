@@ -37,6 +37,7 @@ type FileAnalysis struct {
 	Structs    []string `json:"structs,omitempty"`    // struct/class names
 	Interfaces []string `json:"interfaces,omitempty"` // interface names
 	Types      []string `json:"types,omitempty"`      // type aliases
+	Enums      []string `json:"enums,omitempty"`      // enum declarations (TS/Python)
 	Constants  []string `json:"constants,omitempty"`  // const declarations
 	Methods    []string `json:"methods,omitempty"`    // methods with receivers (Go)
 	Vars       []string `json:"vars,omitempty"`       // package-level variables (Go)
@@ -167,8 +168,8 @@ type Symbol struct {
 	Signature string     `json:"signature,omitempty"` // e.g., "(x: number): string"
 }
 
-// FileAnalysisV2 extends FileAnalysis with rich symbol metadata
-type FileAnalysisV2 struct {
+// SymbolAnalysis holds rich symbol data with scopes and metadata
+type SymbolAnalysis struct {
 	Path     string   `json:"path"`
 	Language string   `json:"language"`
 	Symbols  []Symbol `json:"symbols"`

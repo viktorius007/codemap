@@ -1,0 +1,8 @@
+# Python scope container rules - extracts classes
+# Used for two-pass scope resolution: first extract containers with ranges,
+# then assign symbols to scopes by line containment
+
+id: py-container-class
+language: python
+rule:
+  kind: class_definition

@@ -191,15 +191,38 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 				fileMap[relPath].Interfaces = append(fileMap[relPath].Interfaces, name)
 			}
 		} else if strings.HasSuffix(m.RuleID, "-methods") {
-			name := extractMethodName(m.Text, fileMap[relPath].Language)
-			if name != "" {
-				fileMap[relPath].Methods = append(fileMap[relPath].Methods, name)
+			lang := fileMap[relPath].Language
+			// Before adding to Methods, check for getter/setter (JS/TS only)
+			if (lang == "javascript" || lang == "typescript") &&
+				(strings.HasPrefix(strings.TrimSpace(m.Text), "get ") || strings.HasPrefix(strings.TrimSpace(m.Text), "set ")) {
+				name := extractPropertyName(m.Text, lang)
+				if name != "" {
+					fileMap[relPath].Properties = append(fileMap[relPath].Properties, name)
+				}
+			} else if lang == "python" {
+				// Python methods: use extractFunctionName since py-methods matches function_definition
+				name := extractFunctionName(m.Text, lang)
+				if name != "" {
+					fileMap[relPath].Methods = append(fileMap[relPath].Methods, name)
+				}
+			} else {
+				name := extractMethodName(m.Text, lang)
+				if name != "" {
+					fileMap[relPath].Methods = append(fileMap[relPath].Methods, name)
+				}
 			}
 		} else if strings.HasSuffix(m.RuleID, "-constants") {
 			names := extractConstantNames(m.Text, fileMap[relPath].Language)
 			fileMap[relPath].Constants = append(fileMap[relPath].Constants, names...)
 		} else if strings.HasSuffix(m.RuleID, "-types") {
 			name := extractTypeName(m.Text, fileMap[relPath].Language)
+			if name != "" {
+				fileMap[relPath].Types = append(fileMap[relPath].Types, name)
+			}
+		} else if strings.HasSuffix(m.RuleID, "-type-aliases") {
+			// Go explicit type aliases: type AliasType = string
+			// The type_alias node contains "AliasType = string" (no "type " prefix)
+			name := extractGoTypeAliasName(m.Text)
 			if name != "" {
 				fileMap[relPath].Types = append(fileMap[relPath].Types, name)
 			}
@@ -214,12 +237,16 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 		} else if strings.HasSuffix(m.RuleID, "-enums") {
 			name := extractEnumName(m.Text, fileMap[relPath].Language)
 			if name != "" {
-				fileMap[relPath].Types = append(fileMap[relPath].Types, name)
+				fileMap[relPath].Enums = append(fileMap[relPath].Enums, name)
 			}
 		} else if strings.HasSuffix(m.RuleID, "-lexical") {
 			// TypeScript/JavaScript lexical declarations (const/let/var)
 			// Distinguish between const (-> Constants) and let/var (-> Vars)
 			text := strings.TrimSpace(m.Text)
+			// Skip arrow functions and require() - handled by -arrow-functions and -imports rules
+			if strings.Contains(text, "=>") || strings.Contains(text, "require(") {
+				continue
+			}
 			if strings.HasPrefix(text, "const ") {
 				names := extractConstantNames(m.Text, fileMap[relPath].Language)
 				fileMap[relPath].Constants = append(fileMap[relPath].Constants, names...)
@@ -297,6 +324,46 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 			// Class static blocks: static { ... }
 			// These don't have names, but we track them as a special method
 			fileMap[relPath].Methods = append(fileMap[relPath].Methods, "(static block)")
+		} else if strings.HasSuffix(m.RuleID, "-assignments") {
+			// Python module-level assignments (variables/constants)
+			name, isConst := extractPythonAssignment(m.Text)
+			if name != "" {
+				if isConst {
+					fileMap[relPath].Constants = append(fileMap[relPath].Constants, name)
+				} else {
+					fileMap[relPath].Vars = append(fileMap[relPath].Vars, name)
+				}
+			}
+		} else if strings.HasSuffix(m.RuleID, "-lambdas") {
+			// Python lambda expressions assigned to variables
+			name := extractLambdaName(m.Lines, fileMap[relPath].Language)
+			if name != "" {
+				fileMap[relPath].Functions = append(fileMap[relPath].Functions, name)
+			}
+		} else if strings.HasSuffix(m.RuleID, "-fields") {
+			// Go struct fields and Python instance fields
+			lang := fileMap[relPath].Language
+			if lang == "go" {
+				names := extractGoFieldNames(m.Text)
+				fileMap[relPath].Fields = append(fileMap[relPath].Fields, names...)
+			} else if lang == "python" {
+				name := extractPythonFieldName(m.Text)
+				if name != "" {
+					fileMap[relPath].Fields = append(fileMap[relPath].Fields, name)
+				}
+			}
+		} else if strings.HasSuffix(m.RuleID, "-generators") {
+			// Python generator functions (contain yield)
+			name := extractFunctionName(m.Text, fileMap[relPath].Language)
+			if name != "" {
+				fileMap[relPath].Functions = append(fileMap[relPath].Functions, name)
+			}
+		} else if strings.HasSuffix(m.RuleID, "-properties") || strings.HasSuffix(m.RuleID, "-property-accessors") {
+			// Python @property decorated methods
+			name := extractPythonPropertyName(m.Text)
+			if name != "" {
+				fileMap[relPath].Properties = append(fileMap[relPath].Properties, name)
+			}
 		}
 	}
 
@@ -310,6 +377,7 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 		a.Methods = dedupe(a.Methods)
 		a.Constants = dedupe(a.Constants)
 		a.Types = dedupe(a.Types)
+		a.Enums = dedupe(a.Enums)
 		a.Vars = dedupe(a.Vars)
 		a.Fields = dedupe(a.Fields)
 		a.Properties = dedupe(a.Properties)
@@ -320,8 +388,8 @@ func (s *AstGrepScanner) ScanDirectory(root string) ([]FileAnalysis, error) {
 	return results, nil
 }
 
-// ScanDirectoryV2 analyzes all files using the enhanced Symbol struct with metadata
-func (s *AstGrepScanner) ScanDirectoryV2(root string, includeRefs bool) ([]FileAnalysisV2, error) {
+// ScanSymbols analyzes all files and returns rich symbol data with scopes and metadata
+func (s *AstGrepScanner) ScanSymbols(root string, includeRefs bool) ([]SymbolAnalysis, error) {
 	if !s.Available() {
 		return nil, nil
 	}
@@ -371,7 +439,7 @@ func (s *AstGrepScanner) ScanDirectoryV2(root string, includeRefs bool) ([]FileA
 	}
 
 	// Group matches by file
-	fileMap := make(map[string]*FileAnalysisV2)
+	fileMap := make(map[string]*SymbolAnalysis)
 
 	for _, m := range matches {
 		relPath, _ := filepath.Rel(root, m.File)
@@ -381,7 +449,7 @@ func (s *AstGrepScanner) ScanDirectoryV2(root string, includeRefs bool) ([]FileA
 
 		if fileMap[relPath] == nil {
 			lang := detectLangFromRuleID(m.RuleID)
-			fileMap[relPath] = &FileAnalysisV2{
+			fileMap[relPath] = &SymbolAnalysis{
 				Path:     relPath,
 				Language: lang,
 				Symbols:  []Symbol{},
@@ -389,7 +457,7 @@ func (s *AstGrepScanner) ScanDirectoryV2(root string, includeRefs bool) ([]FileA
 		}
 
 		// Extract symbol with full metadata
-		sym := extractSymbolV2(m, fileMap[relPath].Language)
+		sym := extractSymbol(m, fileMap[relPath].Language)
 		if sym.Name != "" {
 			// Resolve scope using container ranges (for TS/JS)
 			if fileContainers, ok := containers[relPath]; ok && len(fileContainers) > 0 {
@@ -402,11 +470,37 @@ func (s *AstGrepScanner) ScanDirectoryV2(root string, includeRefs bool) ([]FileA
 				}
 			}
 			fileMap[relPath].Symbols = append(fileMap[relPath].Symbols, sym)
+
+			// Handle multi-symbol declarations (Go const/var blocks)
+			lang := fileMap[relPath].Language
+			if lang == "go" {
+				var additionalNames []string
+				var kind SymbolKind
+				if strings.HasSuffix(m.RuleID, "-constants") {
+					additionalNames = extractConstantNames(m.Text, lang)
+					kind = KindConstant
+				} else if strings.HasSuffix(m.RuleID, "-vars") {
+					additionalNames = extractVarNames(m.Text, lang)
+					kind = KindVariable
+				}
+				// Add additional symbols (skip first, already added)
+				for i := 1; i < len(additionalNames); i++ {
+					extraSym := Symbol{
+						Name:   additionalNames[i],
+						Kind:   kind,
+						Role:   RoleDefinition,
+						Line:   sym.Line, // Same line as main declaration
+						Column: sym.Column,
+						Scope:  sym.Scope,
+					}
+					fileMap[relPath].Symbols = append(fileMap[relPath].Symbols, extraSym)
+				}
+			}
 		}
 	}
 
 	// Convert map to slice and dedupe
-	var results []FileAnalysisV2
+	var results []SymbolAnalysis
 	for _, a := range fileMap {
 		a.Symbols = dedupeSymbols(a.Symbols)
 		results = append(results, *a)
@@ -415,8 +509,8 @@ func (s *AstGrepScanner) ScanDirectoryV2(root string, includeRefs bool) ([]FileA
 	return results, nil
 }
 
-// extractSymbolV2 creates a Symbol struct with full metadata from a match
-func extractSymbolV2(m ScanMatch, lang string) Symbol {
+// extractSymbol creates a Symbol struct with full metadata from a match
+func extractSymbol(m ScanMatch, lang string) Symbol {
 	sym := Symbol{
 		Line:   m.Range.Start.Line,
 		Column: m.Range.Start.Column,
@@ -446,7 +540,20 @@ func extractSymbolV2(m ScanMatch, lang string) Symbol {
 	case strings.HasSuffix(m.RuleID, "-interfaces"):
 		sym.Name = extractInterfaceName(m.Text, lang)
 	case strings.HasSuffix(m.RuleID, "-methods"):
-		sym.Name = extractMethodName(m.Text, lang)
+		// Python methods use extractFunctionName since py-methods matches function_definition
+		if lang == "python" {
+			sym.Name = extractFunctionName(m.Text, lang)
+		} else {
+			// JS/TS: Check for getter/setter (get name() or set name(v))
+			text := strings.TrimSpace(m.Text)
+			if (lang == "javascript" || lang == "typescript") &&
+				(strings.HasPrefix(text, "get ") || strings.HasPrefix(text, "set ")) {
+				sym.Name = extractPropertyName(m.Text, lang)
+				sym.Kind = KindProperty
+			} else {
+				sym.Name = extractMethodName(m.Text, lang)
+			}
+		}
 		sym.Scope = extractScopeFromContext(m.Lines, lang)
 	case strings.HasSuffix(m.RuleID, "-method-signatures"):
 		sym.Name = extractMethodSignatureName(m.Text, lang)
@@ -458,6 +565,8 @@ func extractSymbolV2(m ScanMatch, lang string) Symbol {
 		}
 	case strings.HasSuffix(m.RuleID, "-types"):
 		sym.Name = extractTypeName(m.Text, lang)
+	case strings.HasSuffix(m.RuleID, "-type-aliases"):
+		sym.Name = extractGoTypeAliasName(m.Text)
 	case strings.HasSuffix(m.RuleID, "-vars"):
 		names := extractVarNames(m.Text, lang)
 		if len(names) > 0 {
@@ -467,17 +576,20 @@ func extractSymbolV2(m ScanMatch, lang string) Symbol {
 		sym.Name = extractEnumName(m.Text, lang)
 	case strings.HasSuffix(m.RuleID, "-lexical"):
 		text := strings.TrimSpace(m.Text)
-		if strings.HasPrefix(text, "const ") {
-			names := extractConstantNames(m.Text, lang)
-			if len(names) > 0 {
-				sym.Name = names[0]
-				sym.Kind = KindConstant
-			}
-		} else {
-			names := extractVarNames(m.Text, lang)
-			if len(names) > 0 {
-				sym.Name = names[0]
-				sym.Kind = KindVariable
+		// Skip arrow functions and require() - already handled by other rules
+		if !strings.Contains(text, "=>") && !strings.Contains(text, "require(") {
+			if strings.HasPrefix(text, "const ") {
+				names := extractConstantNames(m.Text, lang)
+				if len(names) > 0 {
+					sym.Name = names[0]
+					sym.Kind = KindConstant
+				}
+			} else {
+				names := extractVarNames(m.Text, lang)
+				if len(names) > 0 {
+					sym.Name = names[0]
+					sym.Kind = KindVariable
+				}
 			}
 		}
 	case strings.HasSuffix(m.RuleID, "-namespaces"):
@@ -488,6 +600,17 @@ func extractSymbolV2(m ScanMatch, lang string) Symbol {
 	case strings.HasSuffix(m.RuleID, "-field-definitions"):
 		sym.Name = extractFieldDefinitionName(m.Text, lang)
 		sym.Scope = extractScopeFromContext(m.Lines, lang)
+	case strings.HasSuffix(m.RuleID, "-fields"):
+		// Go fields: "Name  string" -> extract first identifier
+		// Python fields: from FIELD metavar (py-fields uses pattern self.$FIELD = ...)
+		if lang == "python" {
+			if fieldVar, ok := m.MetaVariables.Single["FIELD"]; ok && fieldVar.Text != "" {
+				sym.Name = fieldVar.Text
+			}
+		} else {
+			sym.Name = extractGoFieldName(m.Text)
+		}
+		// Scope is assigned via findContainingScope in ScanSymbols
 	case strings.HasSuffix(m.RuleID, "-decorators"):
 		sym.Name = extractDecoratorName(m.Text, lang)
 	case strings.HasSuffix(m.RuleID, "-import-aliases"):
@@ -507,6 +630,29 @@ func extractSymbolV2(m ScanMatch, lang string) Symbol {
 		sym.Name = extractFunctionExpressionName(m.Text, lang)
 	case strings.HasSuffix(m.RuleID, "-static-blocks"):
 		sym.Name = "(static block)"
+	case strings.HasSuffix(m.RuleID, "-assignments"):
+		// Python module-level assignments
+		name, isConst := extractPythonAssignment(m.Text)
+		sym.Name = name
+		if isConst {
+			sym.Kind = KindConstant
+		} else {
+			sym.Kind = KindVariable
+		}
+	case strings.HasSuffix(m.RuleID, "-properties"), strings.HasSuffix(m.RuleID, "-property-accessors"):
+		// Python @property and @x.setter/@x.deleter decorated methods
+		// JS/TS getter/setter methods
+		if lang == "python" {
+			sym.Name = extractPythonPropertyName(m.Text)
+		} else {
+			sym.Name = extractPropertyName(m.Text, lang)
+			sym.Scope = extractScopeFromContext(m.Lines, lang)
+		}
+		// Python scope assigned via findContainingScope in ScanSymbols
+	case strings.HasSuffix(m.RuleID, "-lambdas"):
+		// Python lambda expressions
+		sym.Name = extractLambdaName(m.Lines, lang)
+		sym.Kind = KindFunction
 	// Reference rules
 	case strings.HasSuffix(m.RuleID, "-ref-function-calls"):
 		sym.Name = extractCallExpressionName(m.Text)
@@ -537,7 +683,8 @@ func determineKind(ruleID string) SymbolKind {
 		return KindImport
 	case strings.HasSuffix(ruleID, "-functions"), strings.HasSuffix(ruleID, "-arrow-functions"),
 		strings.HasSuffix(ruleID, "-function-signatures"), strings.HasSuffix(ruleID, "-generator-functions"),
-		strings.HasSuffix(ruleID, "-function-expressions"), strings.HasSuffix(ruleID, "-ref-function-calls"):
+		strings.HasSuffix(ruleID, "-function-expressions"), strings.HasSuffix(ruleID, "-ref-function-calls"),
+		strings.HasSuffix(ruleID, "-lambdas"):
 		return KindFunction
 	case strings.HasSuffix(ruleID, "-methods"), strings.HasSuffix(ruleID, "-method-signatures"),
 		strings.HasSuffix(ruleID, "-call-signatures"), strings.HasSuffix(ruleID, "-construct-signatures"),
@@ -548,7 +695,8 @@ func determineKind(ruleID string) SymbolKind {
 		return KindClass
 	case strings.HasSuffix(ruleID, "-interfaces"):
 		return KindInterface
-	case strings.HasSuffix(ruleID, "-types"), strings.HasSuffix(ruleID, "-ref-type-references"):
+	case strings.HasSuffix(ruleID, "-types"), strings.HasSuffix(ruleID, "-type-aliases"),
+		strings.HasSuffix(ruleID, "-ref-type-references"):
 		return KindType
 	case strings.HasSuffix(ruleID, "-enums"):
 		return KindEnum
@@ -556,13 +704,15 @@ func determineKind(ruleID string) SymbolKind {
 		return KindNamespace
 	case strings.HasSuffix(ruleID, "-constants"):
 		return KindConstant
-	case strings.HasSuffix(ruleID, "-vars"), strings.HasSuffix(ruleID, "-variable-declarations"):
-		return KindVariable
+	case strings.HasSuffix(ruleID, "-vars"), strings.HasSuffix(ruleID, "-variable-declarations"),
+		strings.HasSuffix(ruleID, "-assignments"):
+		return KindVariable // Python assignments default to variable, refined to constant if ALL_CAPS
 	case strings.HasSuffix(ruleID, "-lexical"):
-		return KindVariable // Will be refined in extractSymbolV2
-	case strings.HasSuffix(ruleID, "-field-definitions"):
+		return KindVariable // Will be refined in extractSymbol
+	case strings.HasSuffix(ruleID, "-field-definitions"), strings.HasSuffix(ruleID, "-fields"):
 		return KindField
-	case strings.HasSuffix(ruleID, "-property-signatures"), strings.HasSuffix(ruleID, "-index-signatures"):
+	case strings.HasSuffix(ruleID, "-property-signatures"), strings.HasSuffix(ruleID, "-index-signatures"),
+		strings.HasSuffix(ruleID, "-properties"), strings.HasSuffix(ruleID, "-property-accessors"):
 		return KindProperty
 	case strings.HasSuffix(ruleID, "-decorators"):
 		return KindDecorator
@@ -618,15 +768,26 @@ func extractScopeFromContext(lines string, lang string) string {
 // Only looks at the first line to avoid picking up modifiers from nested content
 func extractModifiers(text string, lang string) []string {
 	var mods []string
-	if lang != "typescript" && lang != "javascript" {
-		return mods
-	}
 
 	// Only look at the first line to avoid matching modifiers in method bodies
 	firstLine := text
 	if newlineIdx := strings.Index(text, "\n"); newlineIdx > 0 {
 		firstLine = text[:newlineIdx]
 	}
+
+	// Python modifiers
+	if lang == "python" {
+		if strings.Contains(firstLine, "async ") {
+			mods = append(mods, "async")
+		}
+		return mods
+	}
+
+	// TypeScript/JavaScript modifiers
+	if lang != "typescript" && lang != "javascript" {
+		return mods
+	}
+
 	// Also limit to content before opening brace
 	if braceIdx := strings.Index(firstLine, "{"); braceIdx > 0 {
 		firstLine = firstLine[:braceIdx]
@@ -886,7 +1047,8 @@ func extractFunctionName(text string, lang string) string {
 		}
 
 	case "python":
-		// def name(...):
+		// def name(...): or async def name(...):
+		text = strings.TrimPrefix(text, "async ")
 		if strings.HasPrefix(text, "def ") {
 			text = strings.TrimPrefix(text, "def ")
 			if paren := strings.Index(text, "("); paren > 0 {
@@ -988,6 +1150,31 @@ func extractStructName(text string, lang string) string {
 			text = text[idx+5:]
 			if space := strings.IndexAny(text, " \t"); space > 0 {
 				return strings.TrimSpace(text[:space])
+			}
+		}
+	}
+	// Python: class ClassName: or class ClassName(Base):
+	if lang == "python" {
+		text = strings.TrimSpace(text)
+		// Skip decorators at the start
+		for strings.HasPrefix(text, "@") {
+			if newline := strings.Index(text, "\n"); newline > 0 {
+				text = strings.TrimSpace(text[newline+1:])
+			} else {
+				break
+			}
+		}
+		if strings.HasPrefix(text, "class ") {
+			text = strings.TrimPrefix(text, "class ")
+			// Get class name (up to :, (, or whitespace)
+			for i, c := range text {
+				if c == ':' || c == '(' || c == ' ' || c == '\n' {
+					name := strings.TrimSpace(text[:i])
+					if isValidIdentifier(name) {
+						return name
+					}
+					break
+				}
 			}
 		}
 	}
@@ -1220,6 +1407,37 @@ func extractTypeName(text string, lang string) string {
 	return ""
 }
 
+// extractGoFieldName extracts the field name from Go struct field declarations
+// e.g., "Name  string" -> "Name", "Email string `json:\"email\"`" -> "Email"
+func extractGoFieldName(text string) string {
+	text = strings.TrimSpace(text)
+	// Field name is the first identifier before space/tab
+	for i, c := range text {
+		if c == ' ' || c == '\t' {
+			name := text[:i]
+			if isValidIdentifier(name) {
+				return name
+			}
+			break
+		}
+	}
+	return ""
+}
+
+// extractGoTypeAliasName extracts the alias name from Go type alias syntax
+// The type_alias AST node contains "AliasType = string" (without "type " prefix)
+func extractGoTypeAliasName(text string) string {
+	text = strings.TrimSpace(text)
+	// Find the = sign
+	if idx := strings.Index(text, "="); idx > 0 {
+		name := strings.TrimSpace(text[:idx])
+		if isValidIdentifier(name) {
+			return name
+		}
+	}
+	return ""
+}
+
 func extractEnumName(text string, lang string) string {
 	// TypeScript: enum Name { ... } or export enum Name { ... } or const enum Name { ... }
 	if lang == "typescript" {
@@ -1237,6 +1455,10 @@ func extractEnumName(text string, lang string) string {
 			}
 			return text
 		}
+	}
+	// Python: class Color(Enum): - use extractStructName which handles Python classes
+	if lang == "python" {
+		return extractStructName(text, lang)
 	}
 	return ""
 }
@@ -1401,8 +1623,8 @@ func extractFieldDefinitionName(text string, lang string) string {
 }
 
 func extractDecoratorName(text string, lang string) string {
-	// TypeScript: @DecoratorName or @DecoratorName(args)
-	if lang == "typescript" {
+	// TypeScript/Python: @DecoratorName or @DecoratorName(args)
+	if lang == "typescript" || lang == "python" {
 		text = strings.TrimSpace(text)
 		if strings.HasPrefix(text, "@") {
 			text = strings.TrimPrefix(text, "@")
@@ -1410,6 +1632,11 @@ func extractDecoratorName(text string, lang string) string {
 			for i, c := range text {
 				if c == '(' || c == '\n' || c == ' ' || c == '\t' {
 					name := strings.TrimSpace(text[:i])
+					// Handle dotted names like @module.decorator
+					if dotIdx := strings.Index(name, "."); dotIdx >= 0 {
+						// Return just the last part for display
+						name = name[dotIdx+1:]
+					}
 					if isValidIdentifier(name) {
 						return name
 					}
@@ -1417,6 +1644,10 @@ func extractDecoratorName(text string, lang string) string {
 				}
 			}
 			// No delimiter found - whole text is the name
+			// Handle dotted names
+			if dotIdx := strings.Index(text, "."); dotIdx >= 0 {
+				text = text[dotIdx+1:]
+			}
 			if isValidIdentifier(text) {
 				return text
 			}
@@ -1868,6 +2099,122 @@ func extractFunctionExpressionName(text string, lang string) string {
 	return ""
 }
 
+// extractPythonAssignment extracts variable name from Python assignment
+// Returns the name and whether it's a constant (ALL_CAPS convention)
+func extractPythonAssignment(text string) (name string, isConstant bool) {
+	text = strings.TrimSpace(text)
+	// Handle: name = value, name: type = value, or NAME = value (constant)
+	for i, c := range text {
+		if c == '=' || c == ':' || c == ' ' {
+			name := strings.TrimSpace(text[:i])
+			if isValidIdentifier(name) {
+				// Python convention: ALL_CAPS with underscores = constant
+				isConst := len(name) > 1 && name == strings.ToUpper(name) && !strings.HasPrefix(name, "_")
+				return name, isConst
+			}
+			break
+		}
+	}
+	return "", false
+}
+
+// extractLambdaName extracts the variable name a lambda is assigned to
+func extractLambdaName(lines string, lang string) string {
+	if lang == "python" {
+		line := strings.TrimSpace(lines)
+		// Lambda assigned to variable: name = lambda x: x
+		if idx := strings.Index(line, "="); idx > 0 {
+			name := strings.TrimSpace(line[:idx])
+			if isValidIdentifier(name) {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// extractGoFieldNames extracts field names from Go struct field declaration
+// Handles: "Name string" or "X, Y int" (multiple fields same type)
+func extractGoFieldNames(text string) []string {
+	text = strings.TrimSpace(text)
+	// Find the type (last space-separated token)
+	lastSpace := strings.LastIndex(text, " ")
+	if lastSpace < 0 {
+		return nil
+	}
+	fieldsPart := strings.TrimSpace(text[:lastSpace])
+	// Split by comma for multiple fields
+	var names []string
+	for _, f := range strings.Split(fieldsPart, ",") {
+		name := strings.TrimSpace(f)
+		if isValidIdentifier(name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// extractPythonFieldName extracts field name from self.field = value
+func extractPythonFieldName(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "self.") {
+		text = strings.TrimPrefix(text, "self.")
+		for i, c := range text {
+			if c == ' ' || c == '=' {
+				return strings.TrimSpace(text[:i])
+			}
+		}
+	}
+	return ""
+}
+
+// extractPythonPropertyName extracts property name from decorated definition
+// @property\ndef name(self): or @name.setter\ndef name(self, value): -> "name"
+func extractPythonPropertyName(text string) string {
+	// Must start with @ (decorator)
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "@") {
+		return ""
+	}
+
+	// Find "def " after the decorator
+	defIdx := strings.Index(text, "def ")
+	if defIdx < 0 {
+		return ""
+	}
+	text = text[defIdx+4:] // skip "def "
+
+	// Find opening parenthesis
+	parenIdx := strings.Index(text, "(")
+	if parenIdx <= 0 {
+		return ""
+	}
+
+	name := strings.TrimSpace(text[:parenIdx])
+	if isValidIdentifier(name) {
+		return name
+	}
+	return ""
+}
+
+// extractPropertyName extracts property name from getter/setter
+// get name() { ... } or set name(v) { ... } -> "name"
+func extractPropertyName(text string, lang string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "get ") {
+		text = strings.TrimPrefix(text, "get ")
+	} else if strings.HasPrefix(text, "set ") {
+		text = strings.TrimPrefix(text, "set ")
+	} else {
+		return ""
+	}
+	// Extract name before (
+	if paren := strings.Index(text, "("); paren > 0 {
+		return strings.TrimSpace(text[:paren])
+	}
+	return ""
+}
+
 func isValidIdentifier(s string) bool {
 	if s == "" {
 		return false
@@ -2073,9 +2420,10 @@ func extractContainerName(text string, kind string) string {
 
 	text = strings.TrimPrefix(text, keyword)
 
-	// Extract name (up to space, <, {, newline, or extends/implements)
+	// Extract name (up to space, <, {, :, (, newline, or extends/implements)
+	// Note: colon and paren are for Python class syntax: class Name: or class Name(Base):
 	for i, c := range text {
-		if c == ' ' || c == '<' || c == '{' || c == '\n' {
+		if c == ' ' || c == '<' || c == '{' || c == '\n' || c == ':' || c == '(' {
 			name := strings.TrimSpace(text[:i])
 			if isValidIdentifier(name) {
 				return name
@@ -2100,10 +2448,25 @@ func extractContainerName(text string, kind string) string {
 	return ""
 }
 
-// findEndLine finds the line number where a brace-delimited block ends
+// findEndLine finds the line number where a block ends
 // startLine is 0-indexed, returns 0-indexed line number
+// Handles both brace-delimited blocks (most languages) and indentation-based (Python)
 func findEndLine(content []byte, startLine int) int {
 	lines := bytes.Split(content, []byte("\n"))
+
+	// Check if this looks like Python (has colon at end of start line, no opening brace)
+	if startLine < len(lines) {
+		startLineStr := string(lines[startLine])
+		hasBrace := strings.Contains(startLineStr, "{")
+		hasColon := strings.HasSuffix(strings.TrimSpace(startLineStr), ":")
+
+		if hasColon && !hasBrace {
+			// Python indentation-based block
+			return findEndLineByIndentation(lines, startLine)
+		}
+	}
+
+	// Brace-delimited block (most languages)
 	braceCount := 0
 	started := false
 
@@ -2122,6 +2485,61 @@ func findEndLine(content []byte, startLine int) int {
 		}
 	}
 	return len(lines) - 1 // Fallback to last line (0-indexed)
+}
+
+// findEndLineByIndentation finds the end of an indentation-based block (Python)
+func findEndLineByIndentation(lines [][]byte, startLine int) int {
+	if startLine >= len(lines) {
+		return startLine
+	}
+
+	// Find the indentation level of the first content line after the class/def declaration
+	baseIndent := -1
+	for i := startLine + 1; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := bytes.TrimLeft(line, " \t")
+
+		// Skip empty lines and comments
+		if len(trimmed) == 0 || trimmed[0] == '#' {
+			continue
+		}
+
+		// First non-empty line determines the base indentation
+		baseIndent = len(line) - len(trimmed)
+		break
+	}
+
+	if baseIndent < 0 {
+		return startLine // No content found
+	}
+
+	// Find where indentation returns to less than base level
+	lastContentLine := startLine
+	for i := startLine + 1; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := bytes.TrimLeft(line, " \t")
+
+		// Skip empty lines
+		if len(trimmed) == 0 {
+			continue
+		}
+
+		// Skip comments at any indentation
+		if trimmed[0] == '#' {
+			continue
+		}
+
+		currentIndent := len(line) - len(trimmed)
+
+		// If we find a line with less indentation than base, block ended
+		if currentIndent < baseIndent {
+			return lastContentLine
+		}
+
+		lastContentLine = i
+	}
+
+	return lastContentLine
 }
 
 // findContainingScope finds the innermost scope container that contains the given line

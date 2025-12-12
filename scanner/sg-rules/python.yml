@@ -9,3 +9,139 @@ id: py-functions
 language: python
 rule:
   kind: function_definition
+  not:
+    any:
+      - inside:
+          stopBy: end
+          kind: class_definition
+      - inside:
+          kind: decorated_definition
+          has:
+            kind: decorator
+            any:
+              - has:
+                  kind: identifier
+                  regex: ^property$
+              - has:
+                  kind: attribute
+                  has:
+                    kind: identifier
+                    regex: ^(setter|deleter)$
+---
+id: py-classes
+language: python
+rule:
+  kind: class_definition
+  not:
+    has:
+      kind: argument_list
+      has:
+        kind: identifier
+        regex: ^Enum$
+---
+id: py-decorators
+language: python
+rule:
+  kind: decorator
+---
+id: py-assignments
+language: python
+rule:
+  kind: expression_statement
+  has:
+    kind: assignment
+    not:
+      has:
+        kind: lambda
+  not:
+    inside:
+      any:
+        - kind: function_definition
+        - kind: class_definition
+        - kind: block
+          inside:
+            kind: class_definition
+---
+id: py-lambdas
+language: python
+rule:
+  kind: lambda
+---
+id: py-fields
+language: python
+rule:
+  kind: assignment
+  pattern: self.$FIELD = $$$_
+  not:
+    inside:
+      stopBy: end
+      kind: decorated_definition
+      has:
+        kind: decorator
+        has:
+          kind: attribute
+          has:
+            kind: identifier
+            regex: ^(setter|deleter)$
+---
+id: py-enums
+language: python
+rule:
+  kind: class_definition
+  has:
+    kind: argument_list
+    has:
+      kind: identifier
+      regex: ^Enum$
+---
+id: py-generators
+language: python
+rule:
+  kind: function_definition
+  has:
+    stopBy: end
+    kind: yield
+---
+id: py-methods
+language: python
+rule:
+  kind: function_definition
+  inside:
+    stopBy: end
+    kind: class_definition
+  not:
+    inside:
+      kind: decorated_definition
+      has:
+        kind: decorator
+        any:
+          - has:
+              kind: identifier
+              regex: ^property$
+          - has:
+              kind: attribute
+              has:
+                kind: identifier
+                regex: ^(setter|deleter)$
+---
+id: py-properties
+language: python
+rule:
+  kind: decorated_definition
+  has:
+    kind: decorator
+    has:
+      kind: identifier
+      regex: ^property$
+---
+id: py-property-accessors
+language: python
+rule:
+  kind: decorated_definition
+  has:
+    kind: decorator
+    has:
+      kind: attribute
+      has:
+        kind: identifier
+        regex: ^(setter|deleter)$

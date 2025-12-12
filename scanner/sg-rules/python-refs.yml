@@ -1,0 +1,6 @@
+# Python reference tracking rules
+
+id: py-ref-function-calls
+language: python
+rule:
+  kind: call
